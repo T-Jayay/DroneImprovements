@@ -1,0 +1,9 @@
+{
+  "name": "DroneImprovements",
+  "version_number": "1.1.0",
+  "website_url": "",
+  "description": "Dying in multiplayer no longer dooms your run: drones keep survivor actions (interact, buy, items, gold; host toggles), get Disconnect and Teleport-to-player abilities, and aren't needed for the Mithrix cutscene.",
+  "dependencies": [
+    "bbepis-BepInExPack-5.4.2122"
+  ]
+}

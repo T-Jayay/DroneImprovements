@@ -1,0 +1,34 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{00D7563B-FAF3-450D-95C4-1A629E4825EC}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DroneImprovements", "src\DroneImprovements\DroneImprovements.csproj", "{EB049F5C-CFE6-4A16-81C9-50C087A00A63}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DroneImprovements.DevTools", "src\DroneImprovements.DevTools\DroneImprovements.DevTools.csproj", "{79631099-0D00-43EE-B7FF-35311C7E75EB}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{EB049F5C-CFE6-4A16-81C9-50C087A00A63}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{EB049F5C-CFE6-4A16-81C9-50C087A00A63}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{EB049F5C-CFE6-4A16-81C9-50C087A00A63}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{EB049F5C-CFE6-4A16-81C9-50C087A00A63}.Release|Any CPU.Build.0 = Release|Any CPU
+		{79631099-0D00-43EE-B7FF-35311C7E75EB}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{79631099-0D00-43EE-B7FF-35311C7E75EB}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{79631099-0D00-43EE-B7FF-35311C7E75EB}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{79631099-0D00-43EE-B7FF-35311C7E75EB}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{EB049F5C-CFE6-4A16-81C9-50C087A00A63} = {00D7563B-FAF3-450D-95C4-1A629E4825EC}
+		{79631099-0D00-43EE-B7FF-35311C7E75EB} = {00D7563B-FAF3-450D-95C4-1A629E4825EC}
+	EndGlobalSection
+EndGlobal
