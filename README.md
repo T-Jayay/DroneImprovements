@@ -2,6 +2,8 @@
 
 Risk of Rain 2 (BepInEx) mod that improves the vanilla **Remote Operation** feature — dead players piloting drones.
 
+Published on Thunderstore as [revoreverse-DroneImprovements](https://thunderstore.io/c/riskofrain2/p/revoreverse/DroneImprovements/). Released under [the Unlicense](LICENSE) (public domain). For how the project is set up, researched, tested and published, see **[docs/MODDING_GUIDE.md](docs/MODDING_GUIDE.md)**.
+
 ## Features
 
 | | |
@@ -28,6 +30,16 @@ The build copies both plugins into `profiles/Test/BepInEx/plugins/`. Pass `-p:De
 
 - `src/DroneImprovements` — the mod.
 - `src/DroneImprovements.DevTools` — solo-testing helper. **Never ship this.**
+- `tools/` — `make_icons.py` (skill and package icons), `package.py` (Thunderstore zip).
+
+## Not yet tested in a real multiplayer lobby
+
+All testing so far was solo with DevTools. Before relying on these, check them with another player:
+
+- Disconnect from a **client** (client → host request, message id 17392).
+- Host settings reaching clients (`DroneSurvivorActions` / `DroneGold` prompts, message id 17393).
+- Mithrix arena cutscene and escape ship not waiting for drones; drones outside the arena not being killed.
+- The run ending when every non-drone player is dead.
 
 ## Testing solo (DevTools)
 
