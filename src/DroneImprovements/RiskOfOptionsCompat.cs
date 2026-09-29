@@ -1,35 +1,98 @@
+using System;
 using System.Runtime.CompilerServices;
 using BepInEx.Bootstrap;
-using DroneImprovements.Skills;
+using BepInEx.Configuration;
 using RiskOfOptions;
+using RiskOfOptions.OptionConfigs;
 using RiskOfOptions.Options;
+using UnityEngine;
+using UnityEngine.Networking;
 
 namespace DroneImprovements
 {
-    /// <summary>In-game settings through Risk of Options, only when that mod is installed.</summary>
+    /// <summary>
+    /// In-game settings through Risk of Options, a soft dependency. Its types appear only inside the bodies of the
+    /// non-inlined methods here, so they are only loaded when it is installed.
+    /// </summary>
     internal static class RiskOfOptionsCompat
     {
         public const string Guid = "com.rune580.riskofoptions";
 
-        public static bool Enabled => Chainloader.PluginInfos.ContainsKey(Guid);
+        // The store icon, embedded from thunderstore/DroneImprovements/icon.png by Directory.Build.targets.
+        private const string IconResource = "DroneImprovements.icon.png";
 
-        // Kept separate and non-inlined so RiskOfOptions types are only loaded when the mod is present.
-        [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.NoOptimization)]
+        private const float DisconnectHoldStep = 0.1f;
+        private const float TeleportCooldownStep = 1f;
+
+        public static bool IsInstalled => Chainloader.PluginInfos.ContainsKey(Guid);
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
         public static void Init()
         {
-            ModSettingsManager.SetModDescription(
-                "Remote Operation improvements. Settings marked (host) are decided by the host for everyone.");
-            if (DroneSkills.TeleportSkill && DroneSkills.TeleportSkill.icon)
+            ModSettingsManager.SetModDescription("Makes Remote Operation drones useful for dead players: survivor "
+                + "actions, Disconnect and Teleport skills, and objectives that don't wait for drones. Settings marked "
+                + "(host) are decided by the host for everyone and are greyed out while you're a client; the others "
+                + "only affect your own drone.");
+            Sprite icon = EmbeddedSprites.Load(IconResource);
+            if (icon)
             {
-                ModSettingsManager.SetModIcon(DroneSkills.TeleportSkill.icon);
+                ModSettingsManager.SetModIcon(icon);
             }
-            ModSettingsManager.AddOption(new CheckBoxOption(PluginConfig.DroneSurvivorActions));
-            ModSettingsManager.AddOption(new ChoiceOption(PluginConfig.DroneGold));
-            ModSettingsManager.AddOption(new CheckBoxOption(PluginConfig.DronesCanChargeHoldoutZones));
-            ModSettingsManager.AddOption(new CheckBoxOption(PluginConfig.IgnoreDronesForAllPlayerChecks));
-            ModSettingsManager.AddOption(new CheckBoxOption(PluginConfig.SpareDronesFromArenaVoidKill));
-            ModSettingsManager.AddOption(new CheckBoxOption(PluginConfig.DisconnectEnabled));
-            ModSettingsManager.AddOption(new CheckBoxOption(PluginConfig.TeleportEnabled));
+
+            AddCheckBox(PluginConfig.DroneSurvivorActions, hostOnly: true);
+            AddChoice(PluginConfig.DroneGold, hostOnly: true);
+            AddCheckBox(PluginConfig.DronesCanChargeHoldoutZones, hostOnly: true);
+            AddCheckBox(PluginConfig.IgnoreDronesForAllPlayerChecks, hostOnly: true);
+            AddCheckBox(PluginConfig.SpareDronesFromArenaVoidKill, hostOnly: true);
+            AddCheckBox(PluginConfig.DisconnectEnabled, hostOnly: false);
+            AddStepSlider(PluginConfig.DisconnectHoldSeconds, DisconnectHoldStep, "{0:0.0}s");
+            AddCheckBox(PluginConfig.TeleportEnabled, hostOnly: false);
+            AddStepSlider(PluginConfig.TeleportCooldown, TeleportCooldownStep, "{0:0}s");
+        }
+
+        /// <summary>Host settings only change anything on the host, so they are greyed out on a client.</summary>
+        private static bool IsClientOfAnotherHost()
+        {
+            return NetworkClient.active && !NetworkServer.active;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static void AddCheckBox(ConfigEntry<bool> entry, bool hostOnly)
+        {
+            CheckBoxConfig config = new CheckBoxConfig();
+            if (hostOnly)
+            {
+                config.checkIfDisabled = IsClientOfAnotherHost;
+            }
+            ModSettingsManager.AddOption(new CheckBoxOption(entry, config));
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static void AddChoice(ConfigEntryBase entry, bool hostOnly)
+        {
+            ChoiceConfig config = new ChoiceConfig();
+            if (hostOnly)
+            {
+                config.checkIfDisabled = IsClientOfAnotherHost;
+            }
+            ModSettingsManager.AddOption(new ChoiceOption(entry, config));
+        }
+
+        /// <summary>A slider over the entry's acceptable range.</summary>
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static void AddStepSlider(ConfigEntry<float> entry, float step, string format)
+        {
+            if (!(entry.Description.AcceptableValues is AcceptableValueRange<float> range))
+            {
+                throw new ArgumentException($"{entry.Definition.Key} has no range.", nameof(entry));
+            }
+            ModSettingsManager.AddOption(new StepSliderOption(entry, new StepSliderConfig
+            {
+                min = range.MinValue,
+                max = range.MaxValue,
+                increment = step,
+                FormatString = format
+            }));
         }
     }
 }

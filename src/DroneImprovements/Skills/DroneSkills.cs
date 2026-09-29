@@ -1,6 +1,9 @@
+using System;
 using System.Collections;
-using System.IO;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using EntityStates;
 using HarmonyLib;
 using RoR2;
@@ -11,69 +14,91 @@ using UnityEngine;
 namespace DroneImprovements.Skills
 {
     /// <summary>
-    /// Adds two real skills to every remote-op drone body so they show up in the HUD skill bar like any ability:
-    ///   Utility slot: Disconnect (hold)      Special slot (R): Teleport to nearest player
-    /// None of the vanilla remote-op drones use those two slots.
+    /// Adds two skills to every Remote Operation drone body, so they show in the HUD skill bar like any ability:
+    /// Disconnect in the Utility slot and Teleport to Player in the Special slot (R). No base-game Remote Operation
+    /// drone uses those two slots. The name and description tokens are plain text, which the game shows as is.
     /// </summary>
     internal static class DroneSkills
     {
         public const string StateMachineName = "DroneImprovementsAbility";
+
+        private const string TeleportIconResource = "DroneImprovements.Assets.texDroneTeleportIcon.png";
+        private const string DisconnectIconResource = "DroneImprovements.Assets.texDroneDisconnectIcon.png";
+
+        // A zero recharge interval would make the game restock Disconnect in the middle of the hold.
+        private const float MinDisconnectRechargeInterval = 0.1f;
+
+        private static AccessTools.FieldRef<GenericSkill, SkillFamily> skillFamily;
 
         public static DroneTeleportSkillDef TeleportSkill { get; private set; }
         public static DroneDisconnectSkillDef DisconnectSkill { get; private set; }
         public static SkillFamily TeleportFamily { get; private set; }
         public static SkillFamily DisconnectFamily { get; private set; }
 
-        private static readonly FieldInfo skillFamilyField = AccessTools.Field(typeof(GenericSkill), "_skillFamily");
+        /// <summary>True once the skills are created and registered; they are only added to bodies then.</summary>
+        public static bool IsInitialized { get; private set; }
 
         public static void Init()
         {
-            TeleportSkill = ScriptableObject.CreateInstance<DroneTeleportSkillDef>();
-            ((ScriptableObject)TeleportSkill).name = "DroneImprovementsTeleport";
-            TeleportSkill.skillName = "DroneImprovementsTeleport";
-            TeleportSkill.skillNameToken = "Teleport to Player";
-            TeleportSkill.skillDescriptionToken = $"Teleport next to the nearest living player. <style=cIsUtility>{PluginConfig.TeleportCooldown.Value:0.#}s cooldown</style>.";
-            TeleportSkill.icon = LoadIcon("texDroneTeleportIcon.png");
-            TeleportSkill.activationStateMachineName = StateMachineName;
-            TeleportSkill.activationState = new SerializableEntityStateType(typeof(DroneTeleportState));
-            TeleportSkill.interruptPriority = InterruptPriority.Skill;
-            TeleportSkill.baseRechargeInterval = PluginConfig.TeleportCooldown.Value;
-            TeleportSkill.baseMaxStock = 1;
-            TeleportSkill.rechargeStock = 1;
-            TeleportSkill.requiredStock = 1;
-            TeleportSkill.stockToConsume = 1;
-            TeleportSkill.fullRestockOnAssign = true;
-            TeleportSkill.isCombatSkill = false;
-            TeleportSkill.cancelSprintingOnActivation = false;
-            TeleportSkill.canceledFromSprinting = false;
-            TeleportSkill.mustKeyPress = true;
+            // GenericSkill has no public way to set its skill family.
+            FieldInfo familyField = AccessTools.Field(typeof(GenericSkill), "_skillFamily");
+            if (familyField == null || familyField.FieldType != typeof(SkillFamily))
+            {
+                DroneImprovementsPlugin.Log.LogError(
+                    "Drone abilities are disabled: the game no longer has GenericSkill._skillFamily.");
+                return;
+            }
+            skillFamily = AccessTools.FieldRefAccess<GenericSkill, SkillFamily>(familyField);
 
-            DisconnectSkill = ScriptableObject.CreateInstance<DroneDisconnectSkillDef>();
-            ((ScriptableObject)DisconnectSkill).name = "DroneImprovementsDisconnect";
-            DisconnectSkill.skillName = "DroneImprovementsDisconnect";
-            DisconnectSkill.skillNameToken = "Disconnect";
-            DisconnectSkill.skillDescriptionToken = "<style=cIsUtility>Hold</style> to end remote operation and return to spectating.";
-            DisconnectSkill.icon = LoadIcon("texDroneDisconnectIcon.png");
-            DisconnectSkill.activationStateMachineName = StateMachineName;
-            DisconnectSkill.activationState = new SerializableEntityStateType(typeof(DroneDisconnectState));
-            DisconnectSkill.interruptPriority = InterruptPriority.Any;
-            // The "cooldown" is only used to display the hold progress; it is refunded when the hold is released.
-            DisconnectSkill.baseRechargeInterval = Mathf.Max(0.1f, PluginConfig.DisconnectHoldSeconds.Value);
+            TeleportSkill = CreateSkillDef<DroneTeleportSkillDef>("DroneImprovementsTeleport", "Teleport to Player",
+                TeleportIconResource, typeof(DroneTeleportState), InterruptPriority.Skill);
+
+            DisconnectSkill = CreateSkillDef<DroneDisconnectSkillDef>("DroneImprovementsDisconnect", "Disconnect",
+                DisconnectIconResource, typeof(DroneDisconnectState), InterruptPriority.Any);
+            DisconnectSkill.skillDescriptionToken =
+                "<style=cIsUtility>Hold</style> to end remote operation and return to spectating.";
+            // The recharge interval only drives the hold progress display (see DroneDisconnectState), and the skill
+            // is given back when the state ends.
             DisconnectSkill.beginSkillCooldownOnSkillEnd = true;
-            DisconnectSkill.baseMaxStock = 1;
-            DisconnectSkill.rechargeStock = 1;
-            DisconnectSkill.requiredStock = 1;
-            DisconnectSkill.stockToConsume = 1;
-            DisconnectSkill.fullRestockOnAssign = true;
-            DisconnectSkill.isCombatSkill = false;
-            DisconnectSkill.cancelSprintingOnActivation = false;
-            DisconnectSkill.canceledFromSprinting = false;
-            DisconnectSkill.mustKeyPress = true;
+
+            ApplyRechargeSettings();
+            PluginConfig.TeleportCooldown.SettingChanged += OnRechargeSettingChanged;
+            PluginConfig.DisconnectHoldSeconds.SettingChanged += OnRechargeSettingChanged;
 
             TeleportFamily = CreateFamily("DroneImprovementsTeleportFamily", TeleportSkill);
             DisconnectFamily = CreateFamily("DroneImprovementsDisconnectFamily", DisconnectSkill);
 
-            ContentManager.collectContentPackProviders += add => add(new DroneContentPackProvider());
+            ContentManager.collectContentPackProviders += AddContentPackProvider;
+            IsInitialized = true;
+        }
+
+        /// <summary>A skill with the settings both share: one charge, no combat skill, sprinting unaffected.</summary>
+        private static T CreateSkillDef<T>(string name, string nameToken, string iconResource, Type stateType,
+            InterruptPriority interruptPriority) where T : SkillDef
+        {
+            T skill = ScriptableObject.CreateInstance<T>();
+            // SkillDef hides ScriptableObject.name with a property that returns null.
+            ((ScriptableObject)skill).name = name;
+            skill.skillName = name;
+            skill.skillNameToken = nameToken;
+            skill.icon = EmbeddedSprites.Load(iconResource);
+            skill.activationStateMachineName = StateMachineName;
+            skill.activationState = new SerializableEntityStateType(stateType);
+            skill.interruptPriority = interruptPriority;
+            skill.baseMaxStock = 1;
+            skill.rechargeStock = 1;
+            skill.requiredStock = 1;
+            skill.stockToConsume = 1;
+            skill.fullRestockOnAssign = true;
+            // Always a single charge: bonus charges from items (Hardlight Afterburner, Lysate Cell) don't apply.
+            skill.dontAllowPastMaxStocks = true;
+            skill.hideStockCount = true;
+            skill.isCombatSkill = false;
+            skill.cancelSprintingOnActivation = false;
+            skill.canceledFromSprinting = false;
+            // Honoured on bodies running GenericCharacterMain; see SkillKeyPress for the flying drones.
+            skill.mustKeyPress = true;
+            return skill;
         }
 
         private static SkillFamily CreateFamily(string name, SkillDef skill)
@@ -91,13 +116,87 @@ namespace DroneImprovements.Skills
             return family;
         }
 
-        /// <summary>
-        /// Called for every remote-op body prefab before BodyCatalog records each body's skill slots, so loadouts
-        /// and networking see the new slots everywhere. The slots are always added (independent of config) so that
-        /// players with different settings still agree on the body layout; the config only enables/disables the skill.
-        /// </summary>
-        public static void AddToBody(GameObject prefab)
+        /// <summary>Copies the per-player cooldown settings into the skills.</summary>
+        private static void ApplyRechargeSettings()
         {
+            float cooldown = PluginConfig.TeleportCooldown.Value;
+            TeleportSkill.baseRechargeInterval = cooldown;
+            TeleportSkill.skillDescriptionToken = "Teleport next to the nearest living player. "
+                + $"<style=cIsUtility>{cooldown:0.#}s base cooldown</style>.";
+            DisconnectSkill.baseRechargeInterval =
+                Mathf.Max(MinDisconnectRechargeInterval, PluginConfig.DisconnectHoldSeconds.Value);
+        }
+
+        /// <summary>A cooldown setting changed: update the skills, including those of existing drones.</summary>
+        private static void OnRechargeSettingChanged(object sender, EventArgs e)
+        {
+            ApplyRechargeSettings();
+            ReadOnlyCollection<CharacterBody> bodies = CharacterBody.readOnlyInstancesList;
+            for (int i = 0; i < bodies.Count; i++)
+            {
+                SkillLocator locator = bodies[i] ? bodies[i].skillLocator : null;
+                if (locator)
+                {
+                    RefreshRechargeInterval(locator.utility);
+                    RefreshRechargeInterval(locator.special);
+                }
+            }
+        }
+
+        private static void RefreshRechargeInterval(GenericSkill skill)
+        {
+            // GenericSkill caches its final recharge interval.
+            if (skill && (skill.skillDef == TeleportSkill || skill.skillDef == DisconnectSkill))
+            {
+                skill.RecalculateValues();
+            }
+        }
+
+        private static void AddContentPackProvider(ContentManager.AddContentPackProviderDelegate addProvider)
+        {
+            addProvider(new DroneContentPackProvider());
+        }
+
+        /// <summary>
+        /// Adds the skills to the Remote Operation bodies among the given prefabs: the remoteOpBody of each DroneDef,
+        /// the same test CharacterBody.Start uses to set isRemoteOp. Called from a hook, inside its try (see
+        /// <see cref="Patches.PatchSafety"/>).
+        /// </summary>
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        internal static void AddToRemoteOpBodies(GameObject[] bodyPrefabs)
+        {
+            HashSet<GameObject> remoteOpBodies = new HashSet<GameObject>();
+            foreach (DroneDef droneDef in ContentManager.droneDefs ?? Array.Empty<DroneDef>())
+            {
+                if (droneDef && droneDef.remoteOpBody)
+                {
+                    remoteOpBodies.Add(droneDef.remoteOpBody);
+                }
+            }
+            foreach (GameObject prefab in bodyPrefabs)
+            {
+                if (!prefab || !remoteOpBodies.Contains(prefab))
+                {
+                    continue;
+                }
+                try
+                {
+                    AddToBody(prefab);
+                }
+                catch (Exception e)
+                {
+                    DroneImprovementsPlugin.Log.LogError($"Couldn't add the drone abilities to {prefab.name}. {e}");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Adds the skills to one body prefab. The slots are added whatever the config, so players with different
+        /// settings agree on the body layout; the config only makes each skill usable or not.
+        /// </summary>
+        private static void AddToBody(GameObject prefab)
+        {
+            // Already done (the catalog can be rebuilt with the body_reload_all console commands).
             if (EntityStateMachine.FindByCustomName(prefab, StateMachineName))
             {
                 return;
@@ -105,30 +204,38 @@ namespace DroneImprovements.Skills
             SkillLocator locator = prefab.GetComponent<SkillLocator>();
             if (!locator)
             {
-                DroneImprovementsPlugin.Log.LogWarning($"{prefab.name} has no SkillLocator; drone abilities not added.");
+                DroneImprovementsPlugin.Log.LogWarning($"{prefab.name} has no SkillLocator; no drone abilities added.");
+                return;
+            }
+            bool addDisconnect = !locator.utility;
+            bool addTeleport = !locator.special;
+            if (!addDisconnect)
+            {
+                DroneImprovementsPlugin.Log.LogWarning($"{prefab.name} already has a Utility skill; no Disconnect.");
+            }
+            if (!addTeleport)
+            {
+                DroneImprovementsPlugin.Log.LogWarning($"{prefab.name} already has a Special skill; no Teleport.");
+            }
+            if (!addDisconnect && !addTeleport)
+            {
                 return;
             }
 
+            // The skills' own state machine. It isn't added to the body's NetworkStateMachine: the states only act
+            // on the drone owner's machine (the teleport and the disconnect request), so there is nothing to sync.
             EntityStateMachine machine = prefab.AddComponent<EntityStateMachine>();
             machine.customName = StateMachineName;
             machine.initialStateType = new SerializableEntityStateType(typeof(Idle));
             machine.mainStateType = new SerializableEntityStateType(typeof(Idle));
 
-            if (!locator.utility)
+            if (addDisconnect)
             {
                 locator.utility = AddSkill(prefab, DisconnectFamily, "DroneDisconnect");
             }
-            else
-            {
-                DroneImprovementsPlugin.Log.LogWarning($"{prefab.name} already has a utility skill; Disconnect not added.");
-            }
-            if (!locator.special)
+            if (addTeleport)
             {
                 locator.special = AddSkill(prefab, TeleportFamily, "DroneTeleport");
-            }
-            else
-            {
-                DroneImprovementsPlugin.Log.LogWarning($"{prefab.name} already has a special skill; Teleport not added.");
             }
         }
 
@@ -137,45 +244,12 @@ namespace DroneImprovements.Skills
             GenericSkill skill = prefab.AddComponent<GenericSkill>();
             skill.skillName = slotName;
             skill.hideInCharacterSelect = true;
-            skillFamilyField.SetValue(skill, family);
+            skillFamily(skill) = family;
             return skill;
         }
 
-        private static Sprite LoadIcon(string fileName)
-        {
-            Texture2D texture = new Texture2D(2, 2, TextureFormat.RGBA32, false);
-            using (Stream stream = typeof(DroneSkills).Assembly.GetManifestResourceStream("DroneImprovements.Assets." + fileName))
-            {
-                if (stream == null)
-                {
-                    DroneImprovementsPlugin.Log.LogError($"Missing embedded icon {fileName}");
-                    return null;
-                }
-                byte[] bytes = new byte[stream.Length];
-                stream.Read(bytes, 0, bytes.Length);
-                texture.LoadImage(bytes);
-            }
-            texture.wrapMode = TextureWrapMode.Clamp;
-            texture.name = System.IO.Path.GetFileNameWithoutExtension(fileName);
-            return Sprite.Create(texture, new Rect(0, 0, texture.width, texture.height), new Vector2(0.5f, 0.5f));
-        }
-
-        [HarmonyPatch(typeof(BodyCatalog), "SetBodyPrefabs")]
-        private static class BodyCatalogSetBodyPrefabsPatch
-        {
-            private static void Prefix(GameObject[] newBodyPrefabs)
-            {
-                foreach (GameObject prefab in newBodyPrefabs)
-                {
-                    if (prefab && prefab.name.EndsWith("BodyRemoteOp"))
-                    {
-                        AddToBody(prefab);
-                    }
-                }
-            }
-        }
-
-        private class DroneContentPackProvider : IContentPackProvider
+        /// <summary>Registers the skills, families and states with the game's content catalogs.</summary>
+        private sealed class DroneContentPackProvider : IContentPackProvider
         {
             private readonly ContentPack contentPack = new ContentPack();
 
@@ -205,35 +279,24 @@ namespace DroneImprovements.Skills
         }
     }
 
-    /// <summary>Only usable while there is a living player to go to (greyed out otherwise).</summary>
-    public class DroneTeleportSkillDef : SkillDef
+    /// <summary>
+    /// Adds the drone skills to the Remote Operation bodies before BodyCatalog records each body's components and
+    /// skill slots, so loadouts and networking see the new slots on every machine.
+    /// </summary>
+    [HarmonyPatch(typeof(BodyCatalog), "SetBodyPrefabs", typeof(GameObject[]))]
+    internal static class BodyCatalogSetBodyPrefabsPatch
     {
-        public override bool IsReady(GenericSkill skillSlot)
+        private static void Prefix(GameObject[] newBodyPrefabs)
         {
-            return base.IsReady(skillSlot) && IsAvailable(skillSlot);
-        }
-
-        public override bool CanExecute(GenericSkill skillSlot)
-        {
-            return base.CanExecute(skillSlot) && IsAvailable(skillSlot);
-        }
-
-        private static bool IsAvailable(GenericSkill skillSlot)
-        {
-            return PluginConfig.TeleportEnabled.Value && skillSlot.characterBody && DroneTeleport.HasTarget(skillSlot.characterBody);
-        }
-    }
-
-    public class DroneDisconnectSkillDef : SkillDef
-    {
-        public override bool IsReady(GenericSkill skillSlot)
-        {
-            return base.IsReady(skillSlot) && PluginConfig.DisconnectEnabled.Value;
-        }
-
-        public override bool CanExecute(GenericSkill skillSlot)
-        {
-            return base.CanExecute(skillSlot) && PluginConfig.DisconnectEnabled.Value;
+            // An exception here would escape into BodyCatalog.Init and stop the game from loading.
+            try
+            {
+                DroneSkills.AddToRemoteOpBodies(newBodyPrefabs);
+            }
+            catch (Exception e)
+            {
+                DroneImprovementsPlugin.Log.LogError($"Couldn't add the drone abilities. {e}");
+            }
         }
     }
 }

@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using System.Text;
 using BepInEx;
 using BepInEx.Configuration;
+using BepInEx.Logging;
 using HarmonyLib;
 using RoR2;
 using UnityEngine;
@@ -11,95 +13,252 @@ using UnityEngine.Networking;
 namespace DroneImprovements.DevTools
 {
     /// <summary>
-    /// Makes the multiplayer-only drone flow testable in a solo run: keeps the run alive after you die and spawns
-    /// invincible AI "stand-in players" that count as players for teleporting and holdout zone charging.
-    /// Drone selection is left completely vanilla (spectator menu, discovered drones, normal cost).
-    /// Only for the test profile.
+    /// TEST-ONLY: never packaged or shipped. Makes DroneImprovements' multiplayer-only drone flow testable in a solo
+    /// run: keeps the run going after you die (PreventGameOver) and spawns invincible AI "stand-in players" that count
+    /// as players for teleporting, spectating and holdout zone charging. Drone selection stays as in the base game
+    /// (spectator menu, discovered drones, normal cost). PreventGameOver applies to everyone in the lobby when the
+    /// host runs this plugin, so it warns whenever more than one player is present.
     /// </summary>
-    [BepInPlugin(PluginGUID, "DroneImprovements DevTools", "1.0.0")]
+    [BepInPlugin(PluginGUID, PluginName, PluginVersion)]
     [BepInDependency(DroneImprovementsPlugin.PluginGUID)]
-    public class DevToolsPlugin : BaseUnityPlugin
+    public sealed class DevToolsPlugin : BaseUnityPlugin
     {
         public const string PluginGUID = "revor.DroneImprovements.DevTools";
+        public const string PluginName = "DroneImprovements DevTools";
+        public const string PluginVersion = "1.0.0";
 
-        private static readonly MethodInfo runPreventGameOverSetter = AccessTools.PropertySetter(typeof(Run), nameof(Run.preventGameOver));
-        internal static readonly List<CharacterBody> standIns = new List<CharacterBody>();
+        private const string StandInMasterName = "CommandoMonsterMaster";
+        private const uint MoneyPerPress = 1000;
+        private const float StandInSpawnDistance = 3f;
+        private const float ActionMessageSeconds = 4f;
+
+        // The panel sits at the left edge, below the money and lunar coin counters.
+        private const float PanelLeft = 10f;
+        private const float PanelTopScreenFraction = 0.22f;
+        private const float PanelWidth = 380f;
+        private const float HelpPanelHeight = 230f;
+        private const float WarningPanelHeight = 60f;
+
+        private static readonly List<CharacterBody> standIns = new List<CharacterBody>();
+        private static readonly Predicate<CharacterBody> isDestroyed = body => !body;
+
+        private Action<Run, bool> setPreventGameOver;
 
         private ConfigEntry<bool> preventGameOver;
-        private ConfigEntry<KeyCode> keyKill;
-        private ConfigEntry<KeyCode> keyMoney;
-        private ConfigEntry<KeyCode> keyStandIn;
-        private ConfigEntry<KeyCode> keyGameOver;
+        private ConfigEntry<KeyCode> keyToggleHelp;
+        private ConfigEntry<KeyCode> keyKillYourself;
+        private ConfigEntry<KeyCode> keyGiveMoney;
+        private ConfigEntry<KeyCode> keySpawnStandIn;
+        private ConfigEntry<KeyCode> keyRemoveStandIns;
+        private ConfigEntry<KeyCode> keyTogglePreventGameOver;
+
         private bool showHelp = true;
         private string lastAction = "";
         private float lastActionTime;
-        private Harmony harmony;
+        private bool lastActionShown;
+        private int shownStandInCount;
+        private int shownPlayerCount;
+
+        // The panel's text, rebuilt only when something on it changes (OnGUI runs several times a frame).
+        private string helpText = "";
+        private string warningText = "";
+        private bool textIsStale = true;
+
+        internal static ManualLogSource Log { get; private set; }
+
+        /// <summary>The stand-ins that haven't been destroyed yet (dead ones stay until their body is gone).</summary>
+        internal static IReadOnlyList<CharacterBody> StandIns => standIns;
+
+        private static CharacterMaster LocalMaster
+        {
+            get
+            {
+                LocalUser localUser = LocalUserManager.GetFirstLocalUser();
+                return localUser != null ? localUser.cachedMaster : null;
+            }
+        }
 
         private void Awake()
         {
+            Log = Logger;
             preventGameOver = Config.Bind("DevTools", "PreventGameOver", true,
-                "Keep solo runs going after you die so you can remote-operate a drone.");
+                "Keep a run going after every player has died, so you can remote-operate a drone solo. When you "
+                + "host, this applies to everyone in the lobby.");
+            keyToggleHelp = Config.Bind("Keys", "ToggleHelp", KeyCode.F5, "Show or hide the DevTools panel.");
+            keyKillYourself = Config.Bind("Keys", "KillYourself", KeyCode.F6, "Kill your character (host only).");
+            keyGiveMoney = Config.Bind("Keys", "GiveMoney", KeyCode.F7, $"Give yourself ${MoneyPerPress} (host only). "
+                + "It is added to your money directly, so DroneGold doesn't block it.");
+            keySpawnStandIn = Config.Bind("Keys", "SpawnStandIn", KeyCode.F4,
+                "Spawn an invincible AI stand-in player in front of you (host only). Spawn one before dying: solo, "
+                + "only stand-ins can be spectated, and with nobody to spectate there is no Remote Operation menu. "
+                + "Not F8, which overlays (NVIDIA, Overwolf, ...) often take before the game sees it.");
+            keyRemoveStandIns = Config.Bind("Keys", "RemoveStandIns", KeyCode.F3,
+                "Remove every stand-in player (host only), for example to test Teleport with nobody to go to.");
+            keyTogglePreventGameOver = Config.Bind("Keys", "TogglePreventGameOver", KeyCode.F10,
+                "Turn PreventGameOver on or off.");
 
-            keyKill = Config.Bind("Keys", "KillYourself", KeyCode.F6, "");
-            keyMoney = Config.Bind("Keys", "GiveMoney", KeyCode.F7, "");
-            // F8 is commonly grabbed by overlays (NVIDIA, Overwolf, ...) before the game sees it.
-            keyStandIn = Config.Bind("Keys", "SpawnStandIn", KeyCode.F4, "");
-            keyGameOver = Config.Bind("Keys", "TogglePreventGameOver", KeyCode.F10, "");
+            preventGameOver.SettingChanged += OnPreventGameOverChanged;
+            Config.SettingChanged += OnAnySettingChanged;
 
-            harmony = new Harmony(PluginGUID);
-            harmony.PatchAll(typeof(DevToolsPlugin).Assembly);
+            ResolvePreventGameOverSetter();
+            PatchGroup("Spectating", "stand-ins can't be spectated", typeof(StandInSpectatePatch));
+            PatchGroup("HoldoutZones", "stand-ins don't count for holdout zones", typeof(StandInLivingPlayersPatch),
+                typeof(StandInPlayersInRadiusPatch));
 
             Run.onRunStartGlobal += OnRunStart;
-            DroneTeleportApi.CollectAdditionalTargets += (drone, targets) => targets.AddRange(standIns);
-            Logger.LogWarning("DroneImprovements DevTools loaded: this is a testing plugin, do not use it in real runs.");
+            DroneTeleportApi.CollectAdditionalTargets += AddStandInTargets;
+            Log.LogWarning("DroneImprovements DevTools loaded: a testing plugin, never use it in real runs.");
         }
 
-        private void OnDestroy()
+        private void ResolvePreventGameOverSetter()
         {
-            harmony?.UnpatchSelf();
+            MethodInfo setter = AccessTools.PropertySetter(typeof(Run), nameof(Run.preventGameOver));
+            if (setter == null)
+            {
+                Log.LogWarning("Run.preventGameOver has no setter any more, so PreventGameOver does nothing.");
+                return;
+            }
+            try
+            {
+                setPreventGameOver = AccessTools.MethodDelegate<Action<Run, bool>>(setter);
+            }
+            catch (Exception e)
+            {
+                Log.LogWarning($"PreventGameOver does nothing: Run.preventGameOver changed. {e}");
+            }
+        }
+
+        /// <summary>Applies patch classes that only work together, all or none.</summary>
+        private static void PatchGroup(string feature, string fallback, params Type[] patchClasses)
+        {
+            Harmony harmony = new Harmony(PluginGUID + "." + feature);
+            try
+            {
+                foreach (Type patchClass in patchClasses)
+                {
+                    List<MethodInfo> patched = harmony.CreateClassProcessor(patchClass).Patch();
+                    // Harmony returns an empty list when a patch class's Prepare() says no.
+                    if (patched == null || patched.Count == 0)
+                    {
+                        throw new InvalidOperationException($"{patchClass.Name} patched nothing.");
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                Log.LogWarning($"{feature}: {fallback}. {e}");
+                try
+                {
+                    harmony.UnpatchSelf();
+                }
+                catch (Exception unpatchError)
+                {
+                    Log.LogError($"Couldn't remove the {feature} patches that did apply. {unpatchError}");
+                }
+            }
+        }
+
+        private static void AddStandInTargets(CharacterBody drone, List<CharacterBody> targets)
+        {
+            targets.AddRange(standIns);
         }
 
         private void OnRunStart(Run run)
         {
-            standIns.Clear();
-            ApplyPreventGameOver();
+            // Run.onRunStartGlobal stops calling later handlers when one throws.
+            try
+            {
+                standIns.Clear();
+                ApplyPreventGameOver(run);
+            }
+            catch (Exception e)
+            {
+                Log.LogError($"Couldn't set up the run. {e}");
+            }
         }
 
-        private void ApplyPreventGameOver()
+        private void OnPreventGameOverChanged(object sender, EventArgs e)
         {
-            if (NetworkServer.active && Run.instance)
+            ApplyPreventGameOver(Run.instance);
+        }
+
+        private void OnAnySettingChanged(object sender, SettingChangedEventArgs e)
+        {
+            textIsStale = true;
+        }
+
+        private void ApplyPreventGameOver(Run run)
+        {
+            if (NetworkServer.active && run && setPreventGameOver != null)
             {
-                runPreventGameOverSetter.Invoke(Run.instance, new object[] { preventGameOver.Value });
+                setPreventGameOver(run, preventGameOver.Value);
             }
         }
 
         private void Update()
         {
-            standIns.RemoveAll(b => !b);
+            standIns.RemoveAll(isDestroyed);
             if (!Run.instance)
             {
                 return;
             }
-            if (Input.GetKeyDown(KeyCode.F5))
-            {
-                showHelp = !showHelp;
-            }
+            TrackPanelChanges();
             if (Util.IsChatWindowOpen())
             {
                 return;
             }
-            if (Input.GetKeyDown(keyKill.Value)) KillSelf();
-            if (Input.GetKeyDown(keyMoney.Value)) GiveMoney();
-            if (Input.GetKeyDown(keyStandIn.Value)) SpawnStandIn();
-            if (Input.GetKeyDown(keyGameOver.Value))
+            if (Input.GetKeyDown(keyToggleHelp.Value))
+            {
+                showHelp = !showHelp;
+            }
+            if (Input.GetKeyDown(keyKillYourself.Value))
+            {
+                KillYourself();
+            }
+            if (Input.GetKeyDown(keyGiveMoney.Value))
+            {
+                GiveMoney();
+            }
+            if (Input.GetKeyDown(keySpawnStandIn.Value))
+            {
+                SpawnStandIn();
+            }
+            if (Input.GetKeyDown(keyRemoveStandIns.Value))
+            {
+                RemoveStandIns();
+            }
+            if (Input.GetKeyDown(keyTogglePreventGameOver.Value))
             {
                 preventGameOver.Value = !preventGameOver.Value;
-                ApplyPreventGameOver();
                 Report("Prevent game over: " + (preventGameOver.Value ? "ON" : "OFF"));
             }
         }
 
-        private static CharacterMaster LocalMaster => LocalUserManager.GetFirstLocalUser()?.cachedMaster;
+        /// <summary>Marks the panel's text as stale when what it shows changes; warns about other players.</summary>
+        private void TrackPanelChanges()
+        {
+            int playerCount = NetworkUser.readOnlyInstancesList.Count;
+            if (playerCount != shownPlayerCount)
+            {
+                if (playerCount > 1 && shownPlayerCount <= 1)
+                {
+                    Log.LogWarning($"{playerCount} players are here. DevTools is for solo tests: when you host, "
+                        + "PreventGameOver keeps the run going for everyone.");
+                }
+                shownPlayerCount = playerCount;
+                textIsStale = true;
+            }
+            if (standIns.Count != shownStandInCount)
+            {
+                shownStandInCount = standIns.Count;
+                textIsStale = true;
+            }
+            if (lastActionShown && Time.unscaledTime - lastActionTime >= ActionMessageSeconds)
+            {
+                lastActionShown = false;
+                textIsStale = true;
+            }
+        }
 
         private bool RequireHost()
         {
@@ -111,10 +270,14 @@ namespace DroneImprovements.DevTools
             return false;
         }
 
-        private void KillSelf()
+        private void KillYourself()
         {
-            if (!RequireHost()) return;
-            CharacterBody body = LocalMaster ? LocalMaster.GetBody() : null;
+            if (!RequireHost())
+            {
+                return;
+            }
+            CharacterMaster master = LocalMaster;
+            CharacterBody body = master ? master.GetBody() : null;
             if (body && body.healthComponent)
             {
                 body.healthComponent.Suicide();
@@ -124,33 +287,44 @@ namespace DroneImprovements.DevTools
 
         private void GiveMoney()
         {
-            if (!RequireHost()) return;
+            if (!RequireHost())
+            {
+                return;
+            }
             CharacterMaster master = LocalMaster;
             if (master)
             {
-                master.GiveMoney(1000);
-                Report("+$1000");
+                master.money += MoneyPerPress;
+                Report($"+${MoneyPerPress}");
             }
         }
 
         /// <summary>Spawns an invincible AI survivor on the player team that stands in for another player.</summary>
         private void SpawnStandIn()
         {
-            if (!RequireHost()) return;
-            CharacterMaster localMaster = LocalMaster;
-            if (!localMaster) return;
-
-            GameObject masterPrefab = MasterCatalog.FindMasterPrefab("CommandoMonsterMaster");
-            if (!masterPrefab)
+            if (!RequireHost())
             {
-                Report("CommandoMonsterMaster not found");
+                return;
+            }
+            CharacterMaster localMaster = LocalMaster;
+            if (!localMaster)
+            {
+                return;
+            }
+            GameObject masterPrefab = MasterCatalog.FindMasterPrefab(StandInMasterName);
+            GameObject bodyPrefab = masterPrefab ? masterPrefab.GetComponent<CharacterMaster>().bodyPrefab : null;
+            if (!bodyPrefab)
+            {
+                Report(StandInMasterName + " not found");
                 return;
             }
 
             CharacterBody localBody = localMaster.GetBody();
-            Vector3 origin = localBody ? localBody.footPosition + localBody.inputBank.aimDirection * 3f : localMaster.deathFootPosition;
-            CharacterBody bodyPrefab = masterPrefab.GetComponent<CharacterMaster>().bodyPrefab.GetComponent<CharacterBody>();
-            Vector3 position = TeleportHelper.FindSafeTeleportDestination(origin, bodyPrefab, RoR2Application.rng) ?? origin;
+            Vector3 origin = localBody && localBody.inputBank
+                ? localBody.footPosition + localBody.inputBank.aimDirection * StandInSpawnDistance
+                : localMaster.deathFootPosition;
+            Vector3 position = TeleportHelper.FindSafeTeleportDestination(origin,
+                bodyPrefab.GetComponent<CharacterBody>(), RoR2Application.rng) ?? origin;
 
             CharacterMaster standIn = new MasterSummon
             {
@@ -163,95 +337,98 @@ namespace DroneImprovements.DevTools
             CharacterBody standInBody = standIn ? standIn.GetBody() : null;
             if (!standInBody)
             {
-                Report("Failed to spawn stand-in");
+                Report("Failed to spawn a stand-in");
                 return;
             }
             standInBody.healthComponent.godMode = true;
             standIns.Add(standInBody);
-            Report("Spawned stand-in player");
+            Report("Spawned a stand-in player");
+        }
+
+        /// <summary>Despawns the stand-ins (bodies and masters) without a death.</summary>
+        private void RemoveStandIns()
+        {
+            if (!RequireHost())
+            {
+                return;
+            }
+            int removed = 0;
+            foreach (CharacterBody body in standIns)
+            {
+                CharacterMaster master = body ? body.master : null;
+                if (master)
+                {
+                    master.DestroyBody();
+                    // Destroying a spawned object on the host despawns it for everyone (NetworkIdentity.OnDestroy).
+                    Destroy(master.gameObject);
+                    removed++;
+                }
+                else if (body)
+                {
+                    Destroy(body.gameObject);
+                    removed++;
+                }
+            }
+            standIns.Clear();
+            Report($"Removed {removed} stand-in player(s)");
         }
 
         private void Report(string message)
         {
             lastAction = message;
             lastActionTime = Time.unscaledTime;
-            Logger.LogInfo(message);
+            lastActionShown = true;
+            textIsStale = true;
+            Log.LogInfo(message);
+        }
+
+        private void RebuildText()
+        {
+            textIsStale = false;
+            warningText = shownPlayerCount > 1
+                ? $"<color=yellow>{shownPlayerCount} players here: DevTools is for solo tests, and PreventGameOver "
+                    + "applies to all of them.</color>"
+                : "";
+
+            StringBuilder text = new StringBuilder();
+            text.Append("<b>DroneImprovements DevTools</b>   (").Append(keyToggleHelp.Value).Append(": hide)\n");
+            text.Append(keyKillYourself.Value).Append("   Kill yourself\n");
+            text.Append(keyGiveMoney.Value).Append("   +$").Append(MoneyPerPress).Append('\n');
+            text.Append(keySpawnStandIn.Value).Append("   Spawn a stand-in player (").Append(shownStandInCount)
+                .Append(" alive)\n");
+            text.Append(keyRemoveStandIns.Value).Append("   Remove the stand-in players\n");
+            text.Append(keyTogglePreventGameOver.Value).Append("   Prevent game over: ")
+                .Append(preventGameOver.Value ? "ON" : "OFF");
+            if (warningText.Length != 0)
+            {
+                text.Append('\n').Append(warningText);
+            }
+            if (lastActionShown)
+            {
+                text.Append("\n> ").Append(lastAction);
+            }
+            helpText = text.ToString();
         }
 
         private void OnGUI()
         {
-            if (!Run.instance || !showHelp)
+            if (!Run.instance || (!showHelp && shownPlayerCount <= 1))
             {
                 return;
             }
+            if (textIsStale)
+            {
+                RebuildText();
+            }
+            // Another OnGUI may have left a tint behind; don't leave ours behind either.
+            Color previousColor = GUI.color;
             GUI.color = Color.white;
-            // Below the money / lunar coin counters.
-            GUILayout.BeginArea(new Rect(10, Screen.height * 0.22f, 340, 170), GUI.skin.box);
-            GUILayout.Label("<b>DroneImprovements DevTools</b>  (F5 hide)");
-            GUILayout.Label($"{keyKill.Value}  Kill yourself");
-            GUILayout.Label($"{keyMoney.Value}  +$1000");
-            GUILayout.Label($"{keyStandIn.Value}  Spawn stand-in player ({standIns.Count} alive)");
-            GUILayout.Label($"{keyGameOver.Value} Prevent game over: " + (preventGameOver.Value ? "ON" : "OFF"));
-            if (!string.IsNullOrEmpty(lastAction) && Time.unscaledTime - lastActionTime < 4f)
-            {
-                GUILayout.Label("> " + lastAction);
-            }
+            Rect area = new Rect(PanelLeft, Screen.height * PanelTopScreenFraction, PanelWidth,
+                showHelp ? HelpPanelHeight : WarningPanelHeight);
+            GUILayout.BeginArea(area, GUI.skin.box);
+            GUILayout.Label(showHelp ? helpText : warningText);
             GUILayout.EndArea();
-        }
-    }
-
-    /// <summary>
-    /// Spectating only targets bodies owned by a NetworkUser, so in solo there is nothing to spectate after dying,
-    /// which also means no spectator HUD and no Remote Operation menu. Let the stand-ins be spectated.
-    /// </summary>
-    [HarmonyPatch(typeof(CameraRigControllerSpectateControls), "CanUserSpectateBody")]
-    internal static class StandInSpectatePatch
-    {
-        private static void Postfix(CharacterBody body, ref bool __result)
-        {
-            if (!__result && body && DevToolsPlugin.standIns.Contains(body))
-            {
-                __result = true;
-            }
-        }
-    }
-
-    // Stand-ins are AI, which the game ignores for holdout zones. Count them as players so the
-    // teleporter behaves like it would with another (living, non-drone) player in the game.
-
-    [HarmonyPatch(typeof(HoldoutZoneController), "CountLivingPlayers")]
-    internal static class StandInLivingPlayersPatch
-    {
-        private static void Postfix(TeamIndex teamIndex, ref int __result)
-        {
-            foreach (CharacterBody body in DevToolsPlugin.standIns)
-            {
-                if (body && body.teamComponent.teamIndex == teamIndex && body.healthComponent.alive)
-                {
-                    __result++;
-                }
-            }
-        }
-    }
-
-    [HarmonyPatch(typeof(HoldoutZoneController), nameof(HoldoutZoneController.CountPlayersInRadius))]
-    internal static class StandInPlayersInRadiusPatch
-    {
-        private static readonly Func<HoldoutZoneController, Vector3, float, Vector3, bool> isPointInChargingRadius =
-            AccessTools.MethodDelegate<Func<HoldoutZoneController, Vector3, float, Vector3, bool>>(
-                AccessTools.Method(typeof(HoldoutZoneController), "IsPointInChargingRadius",
-                    new[] { typeof(HoldoutZoneController), typeof(Vector3), typeof(float), typeof(Vector3) }));
-
-        private static void Postfix(HoldoutZoneController holdoutZoneController, Vector3 origin, float chargingRadiusSqr, TeamIndex teamIndex, ref int __result)
-        {
-            foreach (CharacterBody body in DevToolsPlugin.standIns)
-            {
-                if (body && body.teamComponent.teamIndex == teamIndex && body.healthComponent.alive
-                    && isPointInChargingRadius(holdoutZoneController, origin, chargingRadiusSqr, body.corePosition))
-                {
-                    __result++;
-                }
-            }
+            GUI.color = previousColor;
         }
     }
 }

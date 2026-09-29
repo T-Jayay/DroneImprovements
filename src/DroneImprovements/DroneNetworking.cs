@@ -1,3 +1,4 @@
+using System;
 using System.Reflection;
 using HarmonyLib;
 using RoR2;
@@ -8,62 +9,120 @@ using UnityEngine.Networking;
 namespace DroneImprovements
 {
     /// <summary>
-    /// Disconnecting destroys the drone body, which only the host may do, so clients send a small request message.
+    /// The Disconnect ability's host side. Ending remote operation destroys the drone body, which only the host may
+    /// do, so a client sends the host a request naming its drone.
     /// </summary>
     internal static class DroneNetworking
     {
-        // Arbitrary id well clear of UNet's (0-47) and RoR2's (48-~100) message types.
-        public const short DisconnectRequestMsgType = 17392;
+        private static readonly NetworkMessageDelegate disconnectRequestHandler = HandleDisconnectRequest;
 
-        private class DisconnectRequestMessage : MessageBase
+        // The private CharacterMaster members that CharacterMaster.OnBodyDeath uses; resolved once in Init.
+        private static Action<CharacterMaster, Vector3> setDeathFootPosition;
+        private static Action<CharacterMaster, bool> setLostBodyToDeath;
+        private static AccessTools.FieldRef<CharacterMaster, bool> preventRespawnUntilNextStageServer;
+        private static Action<CharacterMaster> restoreOriginalBodyPrefab;
+
+        /// <summary>
+        /// False when a game update removed a member Disconnect needs; the skill then stays greyed out and the host
+        /// refuses requests.
+        /// </summary>
+        public static bool IsDisconnectAvailable { get; private set; }
+
+        /// <summary>The request a client sends: the drone it wants removed.</summary>
+        private sealed class DisconnectRequestMessage : MessageBase
         {
-            public GameObject networkUserObject;
+            public GameObject droneObject;
 
             public override void Serialize(NetworkWriter writer)
             {
-                writer.Write(networkUserObject);
+                writer.Write(droneObject);
             }
 
             public override void Deserialize(NetworkReader reader)
             {
-                networkUserObject = reader.ReadGameObject();
+                droneObject = reader.ReadGameObject();
             }
         }
 
-        private static readonly MethodInfo deathFootPositionSetter = AccessTools.PropertySetter(typeof(CharacterMaster), nameof(CharacterMaster.deathFootPosition));
-        private static readonly MethodInfo lostBodyToDeathSetter = AccessTools.PropertySetter(typeof(CharacterMaster), nameof(CharacterMaster.lostBodyToDeath));
-        private static readonly AccessTools.FieldRef<CharacterMaster, bool> preventRespawnUntilNextStageServer =
-            AccessTools.FieldRefAccess<CharacterMaster, bool>("preventRespawnUntilNextStageServer");
-        private static readonly MethodInfo restoreOriginalBodyPrefab = AccessTools.Method(typeof(CharacterMaster), "RestoreOriginalBodyPrefab");
-
-        private static GameObject disconnectEffectPrefab;
-
-        /// <summary>RoR2 (re)registers its server message handlers whenever a server starts; register ours alongside.</summary>
-        [HarmonyPatch(typeof(NetworkMessageHandlerAttribute), nameof(NetworkMessageHandlerAttribute.RegisterServerMessages))]
-        private static class RegisterServerMessagesPatch
+        public static void Init()
         {
-            private static void Postfix()
+            // The handler is registered even when Disconnect is unavailable, so a request is refused with a log line
+            // instead of arriving as an unknown message (which makes UNet drop the rest of the packet).
+            NetworkManagerSystem.onStartServerGlobal += OnStartServer;
+            IsDisconnectAvailable = ResolveMasterMembers();
+        }
+
+        private static bool ResolveMasterMembers()
+        {
+            MethodInfo footSetter =
+                AccessTools.PropertySetter(typeof(CharacterMaster), nameof(CharacterMaster.deathFootPosition));
+            if (footSetter == null)
             {
-                NetworkServer.RegisterHandler(DisconnectRequestMsgType, HandleDisconnectRequest);
+                return ReportMissing("CharacterMaster.deathFootPosition setter");
+            }
+            MethodInfo lostBodySetter =
+                AccessTools.PropertySetter(typeof(CharacterMaster), nameof(CharacterMaster.lostBodyToDeath));
+            if (lostBodySetter == null)
+            {
+                return ReportMissing("CharacterMaster.lostBodyToDeath setter");
+            }
+            FieldInfo preventRespawnField =
+                AccessTools.Field(typeof(CharacterMaster), "preventRespawnUntilNextStageServer");
+            if (preventRespawnField == null || preventRespawnField.FieldType != typeof(bool))
+            {
+                return ReportMissing("CharacterMaster.preventRespawnUntilNextStageServer");
+            }
+            MethodInfo restoreMethod =
+                AccessTools.Method(typeof(CharacterMaster), "RestoreOriginalBodyPrefab", Type.EmptyTypes);
+            if (restoreMethod == null)
+            {
+                return ReportMissing("CharacterMaster.RestoreOriginalBodyPrefab()");
+            }
+            try
+            {
+                setDeathFootPosition = AccessTools.MethodDelegate<Action<CharacterMaster, Vector3>>(footSetter);
+                setLostBodyToDeath = AccessTools.MethodDelegate<Action<CharacterMaster, bool>>(lostBodySetter);
+                preventRespawnUntilNextStageServer =
+                    AccessTools.FieldRefAccess<CharacterMaster, bool>(preventRespawnField);
+                restoreOriginalBodyPrefab = AccessTools.MethodDelegate<Action<CharacterMaster>>(restoreMethod);
+            }
+            catch (Exception e)
+            {
+                DroneImprovementsPlugin.Log.LogError($"Disconnect is disabled: CharacterMaster changed. {e}");
+                return false;
+            }
+            return true;
+        }
+
+        private static bool ReportMissing(string member)
+        {
+            DroneImprovementsPlugin.Log.LogError($"Disconnect is disabled: the game no longer has {member}.");
+            return false;
+        }
+
+        /// <summary>A server is starting (the game has just registered its own handlers).</summary>
+        private static void OnStartServer()
+        {
+            try
+            {
+                MessageIds.RegisterServerHandler(MessageIds.DisconnectRequest, disconnectRequestHandler);
+            }
+            catch (Exception e)
+            {
+                DroneImprovementsPlugin.Log.LogError($"Clients won't be able to Disconnect from their drones. {e}");
             }
         }
 
-        /// <summary>Called on the machine with authority over the drone (its owner).</summary>
+        /// <summary>Asks the host to end remote operation of this drone. Called on the drone owner's machine.</summary>
         public static void RequestDisconnect(CharacterBody drone)
         {
-            CharacterMaster master = drone ? drone.master : null;
-            if (!master)
+            if (!DroneUtil.IsDronePlayer(drone))
             {
                 return;
             }
             if (NetworkServer.active)
             {
-                ServerDisconnect(master);
-                return;
-            }
-            NetworkUser networkUser = master.playerCharacterMasterController ? master.playerCharacterMasterController.networkUser : null;
-            if (!networkUser)
-            {
+                ServerDisconnect(drone);
                 return;
             }
             NetworkConnection connection = ClientScene.readyConnection;
@@ -71,83 +130,80 @@ namespace DroneImprovements
             {
                 return;
             }
-            connection.Send(DisconnectRequestMsgType, new DisconnectRequestMessage { networkUserObject = networkUser.gameObject });
+            connection.Send(MessageIds.DisconnectRequest,
+                new DisconnectRequestMessage { droneObject = drone.gameObject });
         }
 
         private static void HandleDisconnectRequest(NetworkMessage netMsg)
         {
             DisconnectRequestMessage message = netMsg.ReadMessage<DisconnectRequestMessage>();
-            NetworkUser networkUser = message.networkUserObject ? message.networkUserObject.GetComponent<NetworkUser>() : null;
+            CharacterBody drone = message.droneObject ? message.droneObject.GetComponent<CharacterBody>() : null;
+            CharacterMaster master = drone ? drone.master : null;
+            PlayerCharacterMasterController player = master ? master.playerCharacterMasterController : null;
+            NetworkUser networkUser = player ? player.networkUser : null;
             if (!networkUser)
             {
+                // Not a player's body, or it's already gone.
                 return;
             }
-            // Only the connection that owns this NetworkUser may disconnect it.
-            NetworkConnection owner = networkUser.connectionToClient;
-            if (owner == null || netMsg.conn == null || owner.connectionId != netMsg.conn.connectionId)
+            // Only the connection that owns this player may disconnect their drone.
+            if (networkUser.connectionToClient != netMsg.conn)
             {
-                DroneImprovementsPlugin.Log.LogWarning($"Rejected drone disconnect request for {networkUser.userName} from a connection that does not own it.");
+                DroneImprovementsPlugin.Log.LogWarning($"Refused to disconnect {networkUser.userName}'s drone: the "
+                    + "request came from another player's connection.");
                 return;
             }
-            ServerDisconnect(networkUser.master);
+            ServerDisconnect(drone);
         }
 
         /// <summary>
-        /// Ends remote operation without killing the drone: no death, no Dio's Best Friend consumed, no kill feed.
-        /// Leaves the master in exactly the state vanilla uses after a drone dies, so the player is back to
-        /// spectating, can pick another drone, and still does not prevent a game over.
+        /// Ends remote operation without a death. It does the bookkeeping CharacterMaster.OnBodyDeath does for a drone
+        /// player who has no revive (death position, lostBodyToDeath, no game-over protection, no respawn until the
+        /// next stage, equipment enabled again, the survivor body prefab restored), so the player is back to
+        /// spectating and can pick another drone. Everything else about dying is skipped: no death event or kill feed,
+        /// no revive (a Dio's Best Friend is neither used nor revives the player), and the life stopwatch isn't reset.
         /// </summary>
-        public static void ServerDisconnect(CharacterMaster master)
+        private static void ServerDisconnect(CharacterBody drone)
         {
-            if (!NetworkServer.active || !master)
+            // A request names any body; only a player's drone may be removed.
+            if (!NetworkServer.active || !DroneUtil.IsDronePlayer(drone))
             {
                 return;
             }
-            CharacterBody body = master.GetBody();
-            if (!DroneUtil.IsDronePlayer(body) || !body.healthComponent || !body.healthComponent.alive)
+            if (!IsDisconnectAvailable)
+            {
+                DroneImprovementsPlugin.Log.LogWarning("Refused a drone disconnect: Disconnect is disabled.");
+                return;
+            }
+            CharacterMaster master = drone.master;
+            // The request may arrive late: only remove the drone the player is still controlling.
+            if (!master || master.GetBodyObject() != drone.gameObject
+                || !drone.healthComponent || !drone.healthComponent.alive)
             {
                 return;
             }
 
-            SpawnDisconnectEffect(body);
+            DroneUtil.SpawnTeleportEffect(drone.gameObject, drone.corePosition, drone.radius);
 
-            // Same bookkeeping as CharacterMaster.OnBodyDeath for a drone that had no revive.
-            deathFootPositionSetter.Invoke(master, new object[] { body.footPosition });
-            lostBodyToDeathSetter.Invoke(master, new object[] { true });
+            setDeathFootPosition(master, drone.footPosition);
+            setLostBodyToDeath(master, true);
             master.preventGameOver = false;
             preventRespawnUntilNextStageServer(master) = true;
             master.inventory.SetEquipmentDisabled(false);
 
-            if (body.GetComponent<Inventory>())
+            if (drone.GetComponent<Inventory>())
             {
-                // DestroyBody would copy this (drone-local) inventory over the player's; destroy it directly instead.
-                Object.Destroy(body.gameObject);
-                master.OnBodyDestroyed(body);
+                // DestroyBody would copy this body's own inventory over the player's, so destroy the body directly.
+                // Its OnDestroy tells the master, as DestroyBody would.
+                UnityEngine.Object.Destroy(drone.gameObject);
             }
             else
             {
                 master.DestroyBody();
             }
 
-            restoreOriginalBodyPrefab.Invoke(master, null);
-            DroneImprovementsPlugin.Log.LogInfo($"{master.name} disconnected from their drone.");
-        }
-
-        private static void SpawnDisconnectEffect(CharacterBody body)
-        {
-            if (!disconnectEffectPrefab)
-            {
-                disconnectEffectPrefab = LegacyResourcesAPI.Load<GameObject>("Prefabs/Effects/TeleportOutBoom");
-            }
-            if (disconnectEffectPrefab)
-            {
-                EffectManager.SpawnEffect(disconnectEffectPrefab, new EffectData
-                {
-                    origin = body.corePosition,
-                    rotation = Quaternion.identity,
-                    scale = body.radius
-                }, transmit: true);
-            }
+            restoreOriginalBodyPrefab(master);
+            DroneImprovementsPlugin.Log.LogInfo($"{Util.GetBestMasterName(master)} disconnected from their drone.");
         }
     }
 }

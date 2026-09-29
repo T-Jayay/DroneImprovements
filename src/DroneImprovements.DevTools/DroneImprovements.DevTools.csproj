@@ -1,17 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- Solo-testing helpers. NOT part of the release package; only deploy this to a test profile. -->
-  <PropertyGroup>
-    <AssemblyName>DroneImprovements.DevTools</AssemblyName>
-    <RootNamespace>DroneImprovements.DevTools</RootNamespace>
-    <Version>1.0.0</Version>
-  </PropertyGroup>
-
+  <!-- DroneImprovements.DevTools: solo-testing helpers for DroneImprovements. Test-only: never packaged, and only
+       meant for a test profile (building the solution deploys it next to the mod).
+       Everything else comes from Directory.Build.props and Directory.Build.targets in the repo root. -->
   <ItemGroup>
     <ProjectReference Include="..\DroneImprovements\DroneImprovements.csproj" Private="false" />
   </ItemGroup>
-
-  <Target Name="DeployToProfile" AfterTargets="Build" Condition="'$(DeployToProfile)' == 'true' And Exists('$(ProfileDir)')">
-    <MakeDir Directories="$(ProfileDir)\BepInEx\plugins\DroneImprovements.DevTools" />
-    <Copy SourceFiles="$(TargetPath);$(TargetDir)$(TargetName).pdb" DestinationFolder="$(ProfileDir)\BepInEx\plugins\DroneImprovements.DevTools" />
-  </Target>
 </Project>
