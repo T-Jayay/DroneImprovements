@@ -162,5 +162,5 @@ Many features only happen in multiplayer (e.g. dead players). `src/DroneImprovem
 4. `python tools/package.py` checks the package against Thunderstore's rules (name, Major.Minor.Patch version, description of at most 250 characters, `website_url`, dependency strings, a 256x256 PNG icon, README, a `## <version>` changelog entry, `PluginVersion`), builds the mod and writes `dist/<Mod>-<version>.zip` with `manifest.json`, `README.md`, `CHANGELOG.md`, `icon.png` and the plugin DLL (never a PDB or a test-only plugin). It refuses uncommitted changes in `src/`, `thunderstore/` or the `Directory.Build` files, and an existing zip; `--force` skips both, for test builds only. Pass package names to build only some.
 5. Test the zip in a clean profile with the mod manager's **Import local mod**.
 6. Upload it at https://thunderstore.io/package/create/: team **revoreverse**, community Risk of Rain 2, and tick the **AI Generated** category. New uploads take a while to appear in mod managers.
-7. Check that the package page shows the new version and isn't marked deprecated.
+7. Check that the package page shows the new version.
 8. Tag the release commit (`git tag v<version>`) and push the branch and the tag: `git push origin main v<version>`.
