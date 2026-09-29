@@ -12,7 +12,7 @@ namespace DroneImprovements
     {
         public const string PluginGUID = "revor.DroneImprovements";
         public const string PluginName = "DroneImprovements";
-        public const string PluginVersion = "1.1.0";
+        public const string PluginVersion = "1.1.1";
 
         internal static ManualLogSource Log;
 

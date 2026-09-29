@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.1
+
+- Added a link to the source code: https://github.com/T-Jayay/DroneImprovements
+
 ## 1.1.0
 
 - New host setting **DroneGold**, how drone players earn gold (they always keep what they had when they died):
