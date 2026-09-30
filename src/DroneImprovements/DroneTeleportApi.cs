@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Reflection;
 using RoR2;
 
 namespace DroneImprovements
@@ -12,14 +11,6 @@ namespace DroneImprovements
     /// </summary>
     public static class DroneTeleportApi
     {
-        private static readonly object subscribersLock = new object();
-        private static readonly HashSet<MethodInfo> failedHandlers = new HashSet<MethodInfo>();
-
-        private static Action<CharacterBody, List<CharacterBody>> subscribers;
-
-        // Snapshot of the subscribers, rebuilt when one is added or removed, so raising the event doesn't allocate.
-        private static Delegate[] handlers = Array.Empty<Delegate>();
-
         /// <summary>
         /// Raised whenever the mod looks for the nearest teleport target for a drone. That happens on every machine
         /// whose HUD shows the drone's Teleport skill (the drone's owner and anyone spectating it) every frame, on
@@ -34,53 +25,13 @@ namespace DroneImprovements
         /// A candidate is skipped when it is null or destroyed, the drone itself, a Remote Operation drone, or dead
         /// (or without a health component). There is no team check. The candidate nearest to the drone wins.
         /// </para>
-        /// <para>A handler that throws is logged once and doesn't stop the other handlers.</para>
         /// </summary>
-        public static event Action<CharacterBody, List<CharacterBody>> CollectAdditionalTargets
-        {
-            add
-            {
-                lock (subscribersLock)
-                {
-                    subscribers += value;
-                    handlers = subscribers == null ? Array.Empty<Delegate>() : subscribers.GetInvocationList();
-                }
-            }
-            remove
-            {
-                lock (subscribersLock)
-                {
-                    subscribers -= value;
-                    handlers = subscribers == null ? Array.Empty<Delegate>() : subscribers.GetInvocationList();
-                }
-            }
-        }
+        public static event Action<CharacterBody, List<CharacterBody>> CollectAdditionalTargets;
 
-        internal static bool HasHandlers => handlers.Length != 0;
-
-        /// <summary>Calls every handler, each isolated from the others' exceptions.</summary>
-        internal static void InvokeCollectAdditionalTargets(CharacterBody drone, List<CharacterBody> targets)
+        /// <summary>Raises <see cref="CollectAdditionalTargets"/>.</summary>
+        internal static void CollectTargets(CharacterBody drone, List<CharacterBody> targets)
         {
-            // A handler that subscribes or unsubscribes replaces the array, so this loop stays valid.
-            Delegate[] current = handlers;
-            for (int i = 0; i < current.Length; i++)
-            {
-                Action<CharacterBody, List<CharacterBody>> handler =
-                    (Action<CharacterBody, List<CharacterBody>>)current[i];
-                try
-                {
-                    handler(drone, targets);
-                }
-                catch (Exception e)
-                {
-                    if (failedHandlers.Add(handler.Method))
-                    {
-                        DroneImprovementsPlugin.Log.LogError($"A {nameof(CollectAdditionalTargets)} handler "
-                            + $"({handler.Method.DeclaringType}.{handler.Method.Name}) threw. It is still called, but "
-                            + $"its further errors aren't logged. {e}");
-                    }
-                }
-            }
+            CollectAdditionalTargets?.Invoke(drone, targets);
         }
     }
 }

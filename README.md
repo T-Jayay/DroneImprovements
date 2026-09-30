@@ -8,24 +8,20 @@ A Risk of Rain 2 (BepInEx) mod that improves Remote Operation, the base game's f
 
 ## Building
 
-You need:
-- the [.NET SDK](https://dotnet.microsoft.com/download) 8 or later;
-- Risk of Rain 2;
-- a mod manager profile (Thunderstore Mod Manager, r2modman, ...) with BepInExPack and Risk of Options installed. The build references BepInEx, Harmony and Risk of Options from it and deploys the plugins into it, so use a profile for testing.
+You need the [.NET SDK](https://dotnet.microsoft.com/download) 8 or later. The game, BepInEx, Risk of Options and the MonoMod hook types (`MMHOOK.RoR2`) are referenced from NuGet (the game's publicized reference assemblies, `RiskOfRain2.GameLibs`, come from the [BepInEx feed](https://nuget.bepinex.dev/)), so the first build needs internet access but not the game.
 
 ```
 dotnet build DroneImprovements.sln -c Release
 ```
 
-`Directory.Build.props` says where the game and the profile are. If yours are elsewhere, pass these properties on the command line or set them as environment variables:
+Each build copies `DroneImprovements.dll` and the test-only `DroneImprovements.DevTools.dll` (see below), with their PDBs, into a mod manager profile for testing, as `<ProfileDir>\BepInEx\plugins\<name>\`, if that profile exists; build `src/DroneImprovements/DroneImprovements.csproj` alone to leave DevTools out. The test profile needs BepInExPack and HookGenPatcher (which generates `MMHOOK_RoR2.dll` when the game starts), and Risk of Options for the in-game settings (players can use the mod without it). Set these properties on the command line or as environment variables:
 
 | Property | Default | Example |
 |---|---|---|
-| `GameDir` | `C:\Program Files (x86)\Steam\steamapps\common\Risk of Rain 2` | `-p:GameDir="D:\SteamLibrary\steamapps\common\Risk of Rain 2"` |
 | `ProfileDir` | Thunderstore Mod Manager's `Test` profile: `%APPDATA%\Thunderstore Mod Manager\DataFolder\RiskOfRain2\profiles\Test` | an r2modman profile named `Dev`: `-p:ProfileDir="C:\Users\<you>\AppData\Roaming\r2modmanPlus-local\RiskOfRain2\profiles\Dev"` |
 | `DeployToProfile` | `true` | `-p:DeployToProfile=false` builds without deploying |
 
-A path that doesn't match stops the build with an error naming the property to set. Each build copies `DroneImprovements.dll` and the test-only `DroneImprovements.DevTools.dll` (see below), with their PDBs, into `<ProfileDir>\BepInEx\plugins\<name>\`; build `src/DroneImprovements/DroneImprovements.csproj` alone to leave DevTools out. Close the game before building: it keeps the plugins locked, and the deploy then fails with an error saying so. The build takes the version from `thunderstore/DroneImprovements/manifest.json` and embeds `thunderstore/DroneImprovements/icon.png` for the Risk of Options mod list.
+Close the game before building: it keeps the plugins locked, so the copy fails. The build takes the version from `thunderstore/DroneImprovements/manifest.json` and embeds `thunderstore/DroneImprovements/icon.png` for the Risk of Options mod list.
 
 ## Releasing
 
@@ -38,12 +34,12 @@ The full checklist is under Publishing in the [modding guide](docs/MODDING_GUIDE
 
 ## How it works
 
-- `DroneImprovementsPlugin.cs` sets everything up. Each feature is patched on its own (`ApplyPatches`): if a game update breaks one (a method it patches, or a game member its logic calls, which the patch classes check in `Prepare()`), its patches are removed again, the log names the feature that now works as in the base game, and the rest keeps working. If the game no longer has `CharacterBody.isRemoteOp`, which every feature needs, nothing is patched. A hook that hits an unexpected error doesn't break the game method either: that call works as in the base game, and the error is only logged the first time (`Patches/PatchSafety.cs`).
+- `DroneImprovementsPlugin.cs` sets everything up and adds the MonoMod hooks (`On.` hooks) in `Hooks/` and `Skills/`. Players get `MMHOOK_RoR2.dll`, which the hooks need, from HookGenPatcher, a dependency in the manifest.
 - Every player needs the same version of the mod: it adds `revor.DroneImprovements;<version>` to the game's network mod list, so the game refuses players with another version or without the mod. The mod adds skills and entity states to the game's catalogs and has its own network messages, so a mismatch would break the session.
 - Settings marked *host* in the store README are decided by the host, which sends them to the clients (`HostSettings.cs`). The parts of the mod that also run on clients then follow the host: the interaction prompts (`DroneSurvivorActions`, and `DroneGold` for barrels and the Shrine of Blood), and whether a holdout zone's charge indicator and Lepton Daisy's effect on it count a drone in the zone as charging (`DronesCanChargeHoldoutZones`).
-- Network messages, with their ids in `MessageIds.cs`: 17392, a client asking the host to remove its drone (Disconnect, `DroneNetworking.cs`); 17393, the host settings (`HostSettings.cs`).
+- Network messages, handled through the game's `[NetworkMessageHandler]`, with their ids in `MessageIds.cs`: 17392, a client asking the host to remove its drone (Disconnect, `DroneNetworking.cs`); 17393, the host settings (`HostSettings.cs`).
 - `Skills/` adds the Disconnect (Utility) and Teleport to Player (Special) skills to every Remote Operation body. `DroneTeleport.cs` finds a safe spot next to a player; other mods can add destinations through the public `DroneTeleportApi`.
-- `Patches/` has one file per host setting: `InteractionPatches.cs` (`DroneSurvivorActions`), `GoldPatches.cs` (`DroneGold`), `HoldoutZonePatches.cs` (`DronesCanChargeHoldoutZones`), `AllPlayersCheckPatches.cs` (`IgnoreDronesForAllPlayerChecks`: the Mithrix arena entrance, all-players triggers and the escape ship) and `ArenaVoidKillPatches.cs` (`SpareDronesFromArenaVoidKill`). `PatchSafety.cs` has what the patches use to fail safely.
+- `Hooks/` has one file per host setting: `InteractionHooks.cs` (`DroneSurvivorActions`), `GoldHooks.cs` (`DroneGold`), `HoldoutZoneHooks.cs` (`DronesCanChargeHoldoutZones`), `AllPlayersCheckHooks.cs` (`IgnoreDronesForAllPlayerChecks`: the Mithrix arena entrance, all-players triggers and the escape ship) and `ArenaVoidKillHooks.cs` (`SpareDronesFromArenaVoidKill`).
 - Risk of Options is optional (a soft dependency): `RiskOfOptionsCompat.cs` is only used when it is installed.
 
 ## Testing solo (DevTools)

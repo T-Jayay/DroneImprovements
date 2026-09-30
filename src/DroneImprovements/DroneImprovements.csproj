@@ -2,6 +2,11 @@
   <!-- DroneImprovements: improves Remote Operation, the game's feature that lets dead players pilot drones.
        Everything else comes from Directory.Build.props and Directory.Build.targets in the repo root. -->
   <ItemGroup>
+    <!-- The IL./On. hook types. Compile only: HookGenPatcher (a manifest dependency) generates MMHOOK_RoR2.dll on the
+         player's machine. The package targets .NET Framework, which the game's runtime is compatible with (NU1701). -->
+    <PackageReference Include="MMHOOK.RoR2" Version="2025.12.9" IncludeAssets="compile" NoWarn="NU1701" />
+  </ItemGroup>
+  <ItemGroup>
     <!-- Skill icons drawn by tools/make_icons.py, embedded as DroneImprovements.Assets.<file name>. -->
     <EmbeddedResource Include="Assets\*.png" LogicalName="$(MSBuildProjectName).Assets.%(Filename)%(Extension)" />
   </ItemGroup>

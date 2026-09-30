@@ -2,10 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
-using System.Reflection;
-using System.Runtime.CompilerServices;
 using EntityStates;
-using HarmonyLib;
 using RoR2;
 using RoR2.ContentManagement;
 using RoR2.Skills;
@@ -28,28 +25,13 @@ namespace DroneImprovements.Skills
         // A zero recharge interval would make the game restock Disconnect in the middle of the hold.
         private const float MinDisconnectRechargeInterval = 0.1f;
 
-        private static AccessTools.FieldRef<GenericSkill, SkillFamily> skillFamily;
-
         public static DroneTeleportSkillDef TeleportSkill { get; private set; }
         public static DroneDisconnectSkillDef DisconnectSkill { get; private set; }
         public static SkillFamily TeleportFamily { get; private set; }
         public static SkillFamily DisconnectFamily { get; private set; }
 
-        /// <summary>True once the skills are created and registered; they are only added to bodies then.</summary>
-        public static bool IsInitialized { get; private set; }
-
         public static void Init()
         {
-            // GenericSkill has no public way to set its skill family.
-            FieldInfo familyField = AccessTools.Field(typeof(GenericSkill), "_skillFamily");
-            if (familyField == null || familyField.FieldType != typeof(SkillFamily))
-            {
-                DroneImprovementsPlugin.Log.LogError(
-                    "Drone abilities are disabled: the game no longer has GenericSkill._skillFamily.");
-                return;
-            }
-            skillFamily = AccessTools.FieldRefAccess<GenericSkill, SkillFamily>(familyField);
-
             TeleportSkill = CreateSkillDef<DroneTeleportSkillDef>("DroneImprovementsTeleport", "Teleport to Player",
                 TeleportIconResource, typeof(DroneTeleportState), InterruptPriority.Skill);
 
@@ -69,7 +51,7 @@ namespace DroneImprovements.Skills
             DisconnectFamily = CreateFamily("DroneImprovementsDisconnectFamily", DisconnectSkill);
 
             ContentManager.collectContentPackProviders += AddContentPackProvider;
-            IsInitialized = true;
+            On.RoR2.BodyCatalog.SetBodyPrefabs += BodyCatalog_SetBodyPrefabs;
         }
 
         /// <summary>A skill with the settings both share: one charge, no combat skill, sprinting unaffected.</summary>
@@ -158,36 +140,29 @@ namespace DroneImprovements.Skills
         }
 
         /// <summary>
-        /// Adds the skills to the Remote Operation bodies among the given prefabs: the remoteOpBody of each DroneDef,
-        /// the same test CharacterBody.Start uses to set isRemoteOp. Called from a hook, inside its try (see
-        /// <see cref="Patches.PatchSafety"/>).
+        /// Adds the skills to the Remote Operation bodies before BodyCatalog records each body's components and skill
+        /// slots, so loadouts and networking see the new slots on every machine. The Remote Operation bodies are the
+        /// remoteOpBody of each DroneDef, the same test CharacterBody.Start uses to set isRemoteOp.
         /// </summary>
-        [MethodImpl(MethodImplOptions.NoInlining)]
-        internal static void AddToRemoteOpBodies(GameObject[] bodyPrefabs)
+        private static void BodyCatalog_SetBodyPrefabs(On.RoR2.BodyCatalog.orig_SetBodyPrefabs orig,
+            GameObject[] newBodyPrefabs)
         {
             HashSet<GameObject> remoteOpBodies = new HashSet<GameObject>();
-            foreach (DroneDef droneDef in ContentManager.droneDefs ?? Array.Empty<DroneDef>())
+            foreach (DroneDef droneDef in ContentManager.droneDefs)
             {
-                if (droneDef && droneDef.remoteOpBody)
+                if (droneDef.remoteOpBody)
                 {
                     remoteOpBodies.Add(droneDef.remoteOpBody);
                 }
             }
-            foreach (GameObject prefab in bodyPrefabs)
+            foreach (GameObject prefab in newBodyPrefabs)
             {
-                if (!prefab || !remoteOpBodies.Contains(prefab))
-                {
-                    continue;
-                }
-                try
+                if (remoteOpBodies.Contains(prefab))
                 {
                     AddToBody(prefab);
                 }
-                catch (Exception e)
-                {
-                    DroneImprovementsPlugin.Log.LogError($"Couldn't add the drone abilities to {prefab.name}. {e}");
-                }
             }
+            orig(newBodyPrefabs);
         }
 
         /// <summary>
@@ -244,7 +219,8 @@ namespace DroneImprovements.Skills
             GenericSkill skill = prefab.AddComponent<GenericSkill>();
             skill.skillName = slotName;
             skill.hideInCharacterSelect = true;
-            skillFamily(skill) = family;
+            // GenericSkill has no public way to set its skill family.
+            skill._skillFamily = family;
             return skill;
         }
 
@@ -275,27 +251,6 @@ namespace DroneImprovements.Skills
             {
                 args.ReportProgress(1f);
                 yield break;
-            }
-        }
-    }
-
-    /// <summary>
-    /// Adds the drone skills to the Remote Operation bodies before BodyCatalog records each body's components and
-    /// skill slots, so loadouts and networking see the new slots on every machine.
-    /// </summary>
-    [HarmonyPatch(typeof(BodyCatalog), "SetBodyPrefabs", typeof(GameObject[]))]
-    internal static class BodyCatalogSetBodyPrefabsPatch
-    {
-        private static void Prefix(GameObject[] newBodyPrefabs)
-        {
-            // An exception here would escape into BodyCatalog.Init and stop the game from loading.
-            try
-            {
-                DroneSkills.AddToRemoteOpBodies(newBodyPrefabs);
-            }
-            catch (Exception e)
-            {
-                DroneImprovementsPlugin.Log.LogError($"Couldn't add the drone abilities. {e}");
             }
         }
     }

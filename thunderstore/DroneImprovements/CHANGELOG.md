@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.2
+
+- Internal clean-up, no gameplay changes: the code now follows the Risk of Rain 2 modding community's conventions (the game's own network message handlers, for example) and drops the layers that caught errors and quietly fell back to the base game.
+- If something goes wrong, it now shows up as an error in the log instead of being hidden.
+- The mod now changes the game through MonoMod hooks, like most Risk of Rain 2 mods, instead of Harmony patches. It needs HookGenPatcher, which mod managers install automatically.
+- For other mods: `DroneTeleportApi.CollectAdditionalTargets` is a plain event now, so an exception in a handler is no longer caught.
+
 ## 1.1.1
 
 - Every player needs the same version of the mod: the game refuses players with a different version, or without the mod, instead of letting them into a broken session.

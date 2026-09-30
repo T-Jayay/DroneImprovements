@@ -1,11 +1,9 @@
-using System;
 using System.Runtime.CompilerServices;
 using BepInEx.Bootstrap;
 using BepInEx.Configuration;
 using RiskOfOptions;
 using RiskOfOptions.OptionConfigs;
 using RiskOfOptions.Options;
-using UnityEngine;
 using UnityEngine.Networking;
 
 namespace DroneImprovements
@@ -26,18 +24,14 @@ namespace DroneImprovements
 
         public static bool IsInstalled => Chainloader.PluginInfos.ContainsKey(Guid);
 
-        [MethodImpl(MethodImplOptions.NoInlining)]
+        [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.NoOptimization)]
         public static void Init()
         {
             ModSettingsManager.SetModDescription("Makes Remote Operation drones useful for dead players: survivor "
                 + "actions, Disconnect and Teleport skills, and objectives that don't wait for drones. Settings marked "
                 + "(host) are decided by the host for everyone and are greyed out while you're a client; the others "
                 + "only affect your own drone.");
-            Sprite icon = EmbeddedSprites.Load(IconResource);
-            if (icon)
-            {
-                ModSettingsManager.SetModIcon(icon);
-            }
+            ModSettingsManager.SetModIcon(EmbeddedSprites.Load(IconResource));
 
             AddCheckBox(PluginConfig.DroneSurvivorActions, hostOnly: true);
             AddChoice(PluginConfig.DroneGold, hostOnly: true);
@@ -56,7 +50,7 @@ namespace DroneImprovements
             return NetworkClient.active && !NetworkServer.active;
         }
 
-        [MethodImpl(MethodImplOptions.NoInlining)]
+        [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.NoOptimization)]
         private static void AddCheckBox(ConfigEntry<bool> entry, bool hostOnly)
         {
             CheckBoxConfig config = new CheckBoxConfig();
@@ -67,7 +61,7 @@ namespace DroneImprovements
             ModSettingsManager.AddOption(new CheckBoxOption(entry, config));
         }
 
-        [MethodImpl(MethodImplOptions.NoInlining)]
+        [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.NoOptimization)]
         private static void AddChoice(ConfigEntryBase entry, bool hostOnly)
         {
             ChoiceConfig config = new ChoiceConfig();
@@ -79,13 +73,10 @@ namespace DroneImprovements
         }
 
         /// <summary>A slider over the entry's acceptable range.</summary>
-        [MethodImpl(MethodImplOptions.NoInlining)]
+        [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.NoOptimization)]
         private static void AddStepSlider(ConfigEntry<float> entry, float step, string format)
         {
-            if (!(entry.Description.AcceptableValues is AcceptableValueRange<float> range))
-            {
-                throw new ArgumentException($"{entry.Definition.Key} has no range.", nameof(entry));
-            }
+            AcceptableValueRange<float> range = (AcceptableValueRange<float>)entry.Description.AcceptableValues;
             ModSettingsManager.AddOption(new StepSliderOption(entry, new StepSliderConfig
             {
                 min = range.MinValue,

@@ -1,4 +1,3 @@
-using System;
 using System.Text;
 using DroneImprovements.Skills;
 using RoR2;
@@ -15,26 +14,13 @@ namespace DroneImprovements
     {
         public static void OnGameLoaded()
         {
-            // RoR2Application.onLoad stops calling later handlers when one throws.
-            try
-            {
-                LogDroneBodies();
-            }
-            catch (Exception e)
-            {
-                DroneImprovementsPlugin.Log.LogError($"Couldn't list the Remote Operation drones. {e}");
-            }
-        }
-
-        private static void LogDroneBodies()
-        {
             int bodies = 0;
             int withDisconnect = 0;
             int withTeleport = 0;
             StringBuilder line = new StringBuilder();
             foreach (DroneDef droneDef in DroneCatalog.allDroneDefs)
             {
-                GameObject prefab = droneDef ? droneDef.remoteOpBody : null;
+                GameObject prefab = droneDef.remoteOpBody;
                 if (!prefab)
                 {
                     continue;
@@ -71,7 +57,7 @@ namespace DroneImprovements
 
         private static bool HasFamily(GenericSkill skill, SkillFamily family)
         {
-            return skill && family && skill.skillFamily == family;
+            return skill && skill.skillFamily == family;
         }
 
         private static void AppendSkill(StringBuilder line, string slot, GenericSkill skill)

@@ -32,8 +32,7 @@ namespace DroneImprovements.Skills
     {
         public override bool IsReady(GenericSkill skillSlot)
         {
-            return base.IsReady(skillSlot) && PluginConfig.DisconnectEnabled.Value
-                && DroneNetworking.IsDisconnectAvailable;
+            return base.IsReady(skillSlot) && PluginConfig.DisconnectEnabled.Value;
         }
 
         public override bool CanExecute(GenericSkill skillSlot)

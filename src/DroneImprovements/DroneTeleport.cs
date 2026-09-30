@@ -37,7 +37,6 @@ namespace DroneImprovements
         private const float MinDirectionSqrMagnitude = 0.0001f;
 
         private static readonly List<CharacterBody> extraTargets = new List<CharacterBody>();
-        private static bool collectingExtraTargets;
 
         /// <summary>Teleports the drone next to the nearest target. False when there is nobody to go to.</summary>
         public static bool TryTeleport(CharacterBody drone)
@@ -84,23 +83,11 @@ namespace DroneImprovements
                 }
             }
 
-            // A handler may check the skill again (and so call back into this method): don't re-enter the handlers.
-            if (DroneTeleportApi.HasHandlers && !collectingExtraTargets)
+            extraTargets.Clear();
+            DroneTeleportApi.CollectTargets(drone, extraTargets);
+            for (int i = 0; i < extraTargets.Count; i++)
             {
-                collectingExtraTargets = true;
-                try
-                {
-                    DroneTeleportApi.InvokeCollectAdditionalTargets(drone, extraTargets);
-                    for (int i = 0; i < extraTargets.Count; i++)
-                    {
-                        ConsiderTarget(drone, origin, extraTargets[i], ref best, ref bestSqrDistance);
-                    }
-                }
-                finally
-                {
-                    extraTargets.Clear();
-                    collectingExtraTargets = false;
-                }
+                ConsiderTarget(drone, origin, extraTargets[i], ref best, ref bestSqrDistance);
             }
             return best;
         }

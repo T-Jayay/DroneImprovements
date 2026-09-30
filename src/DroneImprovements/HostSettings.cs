@@ -1,5 +1,5 @@
 using System;
-using DroneImprovements.Patches;
+using DroneImprovements.Hooks;
 using RoR2;
 using RoR2.Networking;
 using UnityEngine.Networking;
@@ -9,7 +9,7 @@ namespace DroneImprovements
     /// <summary>
     /// The settings the host decides for everyone. The host uses its own config and sends the values to each player
     /// who joins, to everyone when a run starts (a resync) and to everyone whenever one of them changes. Clients use
-    /// the host's values, so the patched game code that also runs on their machine matches what the host does: the
+    /// the host's values, so the hooked game code that also runs on their machine matches what the host does: the
     /// interaction and pickup prompts (DroneSurvivorActions, and DroneGold for barrels and Shrine of Blood), whether
     /// a holdout zone's charge indicator and Lepton Daisy's effect on it count a drone inside as charging
     /// (DronesCanChargeHoldoutZones), and the Mithrix arena entrance's trigger (IgnoreDronesForAllPlayerChecks). The
@@ -19,8 +19,6 @@ namespace DroneImprovements
     /// </summary>
     internal static class HostSettings
     {
-        private static readonly NetworkMessageDelegate settingsHandler = HandleSettings;
-
         private static bool receivedSurvivorActions;
         private static DroneGoldMode receivedGoldMode;
         private static bool receivedDronesCanChargeHoldoutZones;
@@ -97,7 +95,7 @@ namespace DroneImprovements
             if (NetworkServer.active)
             {
                 Broadcast();
-                DroneInteractors.ApplySettingToExistingDrones();
+                InteractionHooks.ApplySettingToExistingDrones();
             }
         }
 
@@ -109,42 +107,21 @@ namespace DroneImprovements
             }
         }
 
-        /// <summary>A client is starting a connection (the game has just registered its own handlers).</summary>
+        /// <summary>A client is starting a connection: don't carry an earlier host's values over into it.</summary>
         private static void OnStartClient(NetworkClient client)
         {
-            try
-            {
-                // Don't carry an earlier host's values over into this session.
-                ResetReceivedSettings();
-                MessageIds.RegisterClientHandler(client, MessageIds.HostSettingsUpdate, settingsHandler);
-            }
-            catch (Exception e)
-            {
-                DroneImprovementsPlugin.Log.LogError($"Can't receive the host's settings; the defaults are used. {e}");
-            }
+            ResetReceivedSettings();
         }
 
         /// <summary>On the host: a player joined (their NetworkUser started), so send them the host's values.</summary>
         private static void OnNetworkUserStart(NetworkUser networkUser)
         {
             // The host's own players read the config directly.
-            if (!NetworkServer.active || !networkUser || networkUser.isLocalPlayer)
+            if (!NetworkServer.active || networkUser.isLocalPlayer)
             {
                 return;
             }
-            NetworkConnection connection = networkUser.connectionToClient;
-            if (connection == null)
-            {
-                return;
-            }
-            try
-            {
-                connection.Send(MessageIds.HostSettingsUpdate, CreateMessage());
-            }
-            catch (Exception e)
-            {
-                DroneImprovementsPlugin.Log.LogError($"Couldn't send the host settings to {networkUser.userName}. {e}");
-            }
+            networkUser.connectionToClient.Send(MessageIds.HostSettingsUpdate, CreateMessage());
         }
 
         private static void OnRunStart(Run run)
@@ -157,14 +134,7 @@ namespace DroneImprovements
 
         private static void Broadcast()
         {
-            try
-            {
-                NetworkServer.SendToAll(MessageIds.HostSettingsUpdate, CreateMessage());
-            }
-            catch (Exception e)
-            {
-                DroneImprovementsPlugin.Log.LogError($"Couldn't send the host settings to the players. {e}");
-            }
+            NetworkServer.SendToAll(MessageIds.HostSettingsUpdate, CreateMessage());
         }
 
         private static SettingsMessage CreateMessage()
@@ -179,6 +149,7 @@ namespace DroneImprovements
             };
         }
 
+        [NetworkMessageHandler(msgType = MessageIds.HostSettingsUpdate, client = true)]
         private static void HandleSettings(NetworkMessage netMsg)
         {
             // The host's own client receives the broadcasts too; the host reads its config directly.
@@ -198,7 +169,7 @@ namespace DroneImprovements
             receivedDronesCanChargeHoldoutZones = message.dronesCanChargeHoldoutZones;
             receivedIgnoreDronesForAllPlayerChecks = message.ignoreDronesForAllPlayerChecks;
             receivedSpareDronesFromArenaVoidKill = message.spareDronesFromArenaVoidKill;
-            DroneInteractors.ApplySettingToExistingDrones();
+            InteractionHooks.ApplySettingToExistingDrones();
         }
 
         private static void ResetReceivedSettings()

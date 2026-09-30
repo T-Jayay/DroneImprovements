@@ -1,11 +1,8 @@
 using System;
 using System.Collections.Generic;
-using System.Reflection;
 using System.Text;
 using BepInEx;
 using BepInEx.Configuration;
-using BepInEx.Logging;
-using HarmonyLib;
 using RoR2;
 using UnityEngine;
 using UnityEngine.Networking;
@@ -42,8 +39,6 @@ namespace DroneImprovements.DevTools
         private static readonly List<CharacterBody> standIns = new List<CharacterBody>();
         private static readonly Predicate<CharacterBody> isDestroyed = body => !body;
 
-        private Action<Run, bool> setPreventGameOver;
-
         private ConfigEntry<bool> preventGameOver;
         private ConfigEntry<KeyCode> keyToggleHelp;
         private ConfigEntry<KeyCode> keyKillYourself;
@@ -64,8 +59,6 @@ namespace DroneImprovements.DevTools
         private string warningText = "";
         private bool textIsStale = true;
 
-        internal static ManualLogSource Log { get; private set; }
-
         /// <summary>The stand-ins that haven't been destroyed yet (dead ones stay until their body is gone).</summary>
         internal static IReadOnlyList<CharacterBody> StandIns => standIns;
 
@@ -80,7 +73,6 @@ namespace DroneImprovements.DevTools
 
         private void Awake()
         {
-            Log = Logger;
             preventGameOver = Config.Bind("DevTools", "PreventGameOver", true,
                 "Keep a run going after every player has died, so you can remote-operate a drone solo. When you "
                 + "host, this applies to everyone in the lobby.");
@@ -100,62 +92,11 @@ namespace DroneImprovements.DevTools
             preventGameOver.SettingChanged += OnPreventGameOverChanged;
             Config.SettingChanged += OnAnySettingChanged;
 
-            ResolvePreventGameOverSetter();
-            PatchGroup("Spectating", "stand-ins can't be spectated", typeof(StandInSpectatePatch));
-            PatchGroup("HoldoutZones", "stand-ins don't count for holdout zones", typeof(StandInLivingPlayersPatch),
-                typeof(StandInPlayersInRadiusPatch));
+            StandInHooks.Init();
 
             Run.onRunStartGlobal += OnRunStart;
             DroneTeleportApi.CollectAdditionalTargets += AddStandInTargets;
-            Log.LogWarning("DroneImprovements DevTools loaded: a testing plugin, never use it in real runs.");
-        }
-
-        private void ResolvePreventGameOverSetter()
-        {
-            MethodInfo setter = AccessTools.PropertySetter(typeof(Run), nameof(Run.preventGameOver));
-            if (setter == null)
-            {
-                Log.LogWarning("Run.preventGameOver has no setter any more, so PreventGameOver does nothing.");
-                return;
-            }
-            try
-            {
-                setPreventGameOver = AccessTools.MethodDelegate<Action<Run, bool>>(setter);
-            }
-            catch (Exception e)
-            {
-                Log.LogWarning($"PreventGameOver does nothing: Run.preventGameOver changed. {e}");
-            }
-        }
-
-        /// <summary>Applies patch classes that only work together, all or none.</summary>
-        private static void PatchGroup(string feature, string fallback, params Type[] patchClasses)
-        {
-            Harmony harmony = new Harmony(PluginGUID + "." + feature);
-            try
-            {
-                foreach (Type patchClass in patchClasses)
-                {
-                    List<MethodInfo> patched = harmony.CreateClassProcessor(patchClass).Patch();
-                    // Harmony returns an empty list when a patch class's Prepare() says no.
-                    if (patched == null || patched.Count == 0)
-                    {
-                        throw new InvalidOperationException($"{patchClass.Name} patched nothing.");
-                    }
-                }
-            }
-            catch (Exception e)
-            {
-                Log.LogWarning($"{feature}: {fallback}. {e}");
-                try
-                {
-                    harmony.UnpatchSelf();
-                }
-                catch (Exception unpatchError)
-                {
-                    Log.LogError($"Couldn't remove the {feature} patches that did apply. {unpatchError}");
-                }
-            }
+            Logger.LogWarning("DroneImprovements DevTools loaded: a testing plugin, never use it in real runs.");
         }
 
         private static void AddStandInTargets(CharacterBody drone, List<CharacterBody> targets)
@@ -165,16 +106,8 @@ namespace DroneImprovements.DevTools
 
         private void OnRunStart(Run run)
         {
-            // Run.onRunStartGlobal stops calling later handlers when one throws.
-            try
-            {
-                standIns.Clear();
-                ApplyPreventGameOver(run);
-            }
-            catch (Exception e)
-            {
-                Log.LogError($"Couldn't set up the run. {e}");
-            }
+            standIns.Clear();
+            ApplyPreventGameOver(run);
         }
 
         private void OnPreventGameOverChanged(object sender, EventArgs e)
@@ -189,9 +122,9 @@ namespace DroneImprovements.DevTools
 
         private void ApplyPreventGameOver(Run run)
         {
-            if (NetworkServer.active && run && setPreventGameOver != null)
+            if (NetworkServer.active && run)
             {
-                setPreventGameOver(run, preventGameOver.Value);
+                run.preventGameOver = preventGameOver.Value;
             }
         }
 
@@ -242,7 +175,7 @@ namespace DroneImprovements.DevTools
             {
                 if (playerCount > 1 && shownPlayerCount <= 1)
                 {
-                    Log.LogWarning($"{playerCount} players are here. DevTools is for solo tests: when you host, "
+                    Logger.LogWarning($"{playerCount} players are here. DevTools is for solo tests: when you host, "
                         + "PreventGameOver keeps the run going for everyone.");
                 }
                 shownPlayerCount = playerCount;
@@ -379,7 +312,7 @@ namespace DroneImprovements.DevTools
             lastActionTime = Time.unscaledTime;
             lastActionShown = true;
             textIsStale = true;
-            Log.LogInfo(message);
+            Logger.LogInfo(message);
         }
 
         private void RebuildText()
