@@ -79,7 +79,7 @@ namespace DroneImprovements.DevTools
             keyToggleHelp = Config.Bind("Keys", "ToggleHelp", KeyCode.F5, "Show or hide the DevTools panel.");
             keyKillYourself = Config.Bind("Keys", "KillYourself", KeyCode.F6, "Kill your character (host only).");
             keyGiveMoney = Config.Bind("Keys", "GiveMoney", KeyCode.F7, $"Give yourself ${MoneyPerPress} (host only). "
-                + "It is added to your money directly, so DroneGold doesn't block it.");
+                + "It is added to your money directly, so the gold settings don't affect it.");
             keySpawnStandIn = Config.Bind("Keys", "SpawnStandIn", KeyCode.F4,
                 "Spawn an invincible AI stand-in player in front of you (host only). Spawn one before dying: solo, "
                 + "only stand-ins can be spectated, and with nobody to spectate there is no Remote Operation menu. "

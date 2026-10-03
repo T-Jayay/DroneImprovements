@@ -10,28 +10,40 @@ namespace DroneImprovements
     /// The settings the host decides for everyone. The host uses its own config and sends the values to each player
     /// who joins, to everyone when a run starts (a resync) and to everyone whenever one of them changes. Clients use
     /// the host's values, so the hooked game code that also runs on their machine matches what the host does: the
-    /// interaction and pickup prompts (DroneSurvivorActions, and DroneGold for barrels and Shrine of Blood), whether
-    /// a holdout zone's charge indicator and Lepton Daisy's effect on it count a drone inside as charging
-    /// (DronesCanChargeHoldoutZones), and the Mithrix arena entrance's trigger (IgnoreDronesForAllPlayerChecks). The
-    /// escape ship's counts run on clients too, but only the host acts on them. Until the host's values arrive, a
-    /// client uses the mod's defaults: the host always runs the same version of the mod (see
+    /// interaction and pickup prompts (DroneSurvivorActions, and DroneBarrelGold and DroneShrineOfBloodGold for barrels
+    /// and Shrine of Blood), whether a holdout zone's charge indicator and Lepton Daisy's effect on it count a drone
+    /// inside as charging (DronesCanChargeHoldoutZones), the Mithrix arena entrance's trigger
+    /// (IgnoreDronesForAllPlayerChecks), and the flight speed (SprintSpeedMultiplier: a drone is moved by the client
+    /// that owns it). The escape ship's counts run on clients too, but only the host acts on them. Until the host's
+    /// values arrive, a client uses the mod's defaults: the host always runs the same version of the mod (see
     /// <see cref="DroneImprovementsPlugin"/>), and the defaults are what most hosts use.
     /// </summary>
     internal static class HostSettings
     {
         private static bool receivedSurvivorActions;
-        private static DroneGoldMode receivedGoldMode;
+        private static bool receivedCombatGold;
+        private static bool receivedBarrelGold;
+        private static bool receivedShrineOfBloodGold;
         private static bool receivedDronesCanChargeHoldoutZones;
         private static bool receivedIgnoreDronesForAllPlayerChecks;
         private static bool receivedSpareDronesFromArenaVoidKill;
+        private static float receivedSprintSpeedMultiplier;
 
         /// <summary>Drone players can use interactables and pick up equipment like survivors.</summary>
         public static bool SurvivorActions =>
             NetworkServer.active ? PluginConfig.DroneSurvivorActions.Value : receivedSurvivorActions;
 
-        /// <summary>How drone players earn gold. Gold is paid on the host; clients need it for the prompts.</summary>
-        public static DroneGoldMode GoldMode =>
-            NetworkServer.active ? PluginConfig.DroneGold.Value : receivedGoldMode;
+        /// <summary>Drone players earn combat gold. Gold is paid on the host.</summary>
+        public static bool CombatGold =>
+            NetworkServer.active ? PluginConfig.DroneCombatGold.Value : receivedCombatGold;
+
+        /// <summary>Drone players can open barrels and get their share of the gold. Clients need it for prompts.</summary>
+        public static bool BarrelGold =>
+            NetworkServer.active ? PluginConfig.DroneBarrelGold.Value : receivedBarrelGold;
+
+        /// <summary>Drone players can use Shrine of Blood. Clients need it for prompts.</summary>
+        public static bool ShrineOfBloodGold =>
+            NetworkServer.active ? PluginConfig.DroneShrineOfBloodGold.Value : receivedShrineOfBloodGold;
 
         /// <summary>Drone players inside a holdout zone help charge it.</summary>
         public static bool DronesCanChargeHoldoutZones =>
@@ -49,31 +61,44 @@ namespace DroneImprovements
                 ? PluginConfig.SpareDronesFromArenaVoidKill.Value
                 : receivedSpareDronesFromArenaVoidKill;
 
+        /// <summary>How many times faster drone players fly while holding Sprint. Owners move their drones.</summary>
+        public static float SprintSpeedMultiplier =>
+            NetworkServer.active ? PluginConfig.SprintSpeedMultiplier.Value : receivedSprintSpeedMultiplier;
+
         /// <summary>The host's values of every host setting.</summary>
         private sealed class SettingsMessage : MessageBase
         {
             public bool survivorActions;
-            public DroneGoldMode goldMode;
+            public bool combatGold;
+            public bool barrelGold;
+            public bool shrineOfBloodGold;
             public bool dronesCanChargeHoldoutZones;
             public bool ignoreDronesForAllPlayerChecks;
             public bool spareDronesFromArenaVoidKill;
+            public float sprintSpeedMultiplier;
 
             public override void Serialize(NetworkWriter writer)
             {
                 writer.Write(survivorActions);
-                writer.Write((byte)goldMode);
+                writer.Write(combatGold);
+                writer.Write(barrelGold);
+                writer.Write(shrineOfBloodGold);
                 writer.Write(dronesCanChargeHoldoutZones);
                 writer.Write(ignoreDronesForAllPlayerChecks);
                 writer.Write(spareDronesFromArenaVoidKill);
+                writer.Write(sprintSpeedMultiplier);
             }
 
             public override void Deserialize(NetworkReader reader)
             {
                 survivorActions = reader.ReadBoolean();
-                goldMode = (DroneGoldMode)reader.ReadByte();
+                combatGold = reader.ReadBoolean();
+                barrelGold = reader.ReadBoolean();
+                shrineOfBloodGold = reader.ReadBoolean();
                 dronesCanChargeHoldoutZones = reader.ReadBoolean();
                 ignoreDronesForAllPlayerChecks = reader.ReadBoolean();
                 spareDronesFromArenaVoidKill = reader.ReadBoolean();
+                sprintSpeedMultiplier = reader.ReadSingle();
             }
         }
 
@@ -81,10 +106,13 @@ namespace DroneImprovements
         {
             ResetReceivedSettings();
             PluginConfig.DroneSurvivorActions.SettingChanged += OnSurvivorActionsChanged;
-            PluginConfig.DroneGold.SettingChanged += OnHostSettingChanged;
+            PluginConfig.DroneCombatGold.SettingChanged += OnHostSettingChanged;
+            PluginConfig.DroneBarrelGold.SettingChanged += OnHostSettingChanged;
+            PluginConfig.DroneShrineOfBloodGold.SettingChanged += OnHostSettingChanged;
             PluginConfig.DronesCanChargeHoldoutZones.SettingChanged += OnHostSettingChanged;
             PluginConfig.IgnoreDronesForAllPlayerChecks.SettingChanged += OnHostSettingChanged;
             PluginConfig.SpareDronesFromArenaVoidKill.SettingChanged += OnHostSettingChanged;
+            PluginConfig.SprintSpeedMultiplier.SettingChanged += OnHostSettingChanged;
             NetworkManagerSystem.onStartClientGlobal += OnStartClient;
             NetworkUser.onPostNetworkUserStart += OnNetworkUserStart;
             Run.onRunStartGlobal += OnRunStart;
@@ -142,10 +170,13 @@ namespace DroneImprovements
             return new SettingsMessage
             {
                 survivorActions = PluginConfig.DroneSurvivorActions.Value,
-                goldMode = PluginConfig.DroneGold.Value,
+                combatGold = PluginConfig.DroneCombatGold.Value,
+                barrelGold = PluginConfig.DroneBarrelGold.Value,
+                shrineOfBloodGold = PluginConfig.DroneShrineOfBloodGold.Value,
                 dronesCanChargeHoldoutZones = PluginConfig.DronesCanChargeHoldoutZones.Value,
                 ignoreDronesForAllPlayerChecks = PluginConfig.IgnoreDronesForAllPlayerChecks.Value,
-                spareDronesFromArenaVoidKill = PluginConfig.SpareDronesFromArenaVoidKill.Value
+                spareDronesFromArenaVoidKill = PluginConfig.SpareDronesFromArenaVoidKill.Value,
+                sprintSpeedMultiplier = PluginConfig.SprintSpeedMultiplier.Value
             };
         }
 
@@ -159,26 +190,28 @@ namespace DroneImprovements
             }
             SettingsMessage message = netMsg.ReadMessage<SettingsMessage>();
             receivedSurvivorActions = message.survivorActions;
-            receivedGoldMode = message.goldMode;
-            if (!Enum.IsDefined(typeof(DroneGoldMode), message.goldMode))
-            {
-                receivedGoldMode = (DroneGoldMode)PluginConfig.DroneGold.DefaultValue;
-                DroneImprovementsPlugin.Log.LogWarning(
-                    $"The host sent an unknown DroneGold value ({(int)message.goldMode}); using {receivedGoldMode}.");
-            }
+            receivedCombatGold = message.combatGold;
+            receivedBarrelGold = message.barrelGold;
+            receivedShrineOfBloodGold = message.shrineOfBloodGold;
             receivedDronesCanChargeHoldoutZones = message.dronesCanChargeHoldoutZones;
             receivedIgnoreDronesForAllPlayerChecks = message.ignoreDronesForAllPlayerChecks;
             receivedSpareDronesFromArenaVoidKill = message.spareDronesFromArenaVoidKill;
+            // Network input is validated: keep the host's value within the setting's range.
+            receivedSprintSpeedMultiplier = (float)PluginConfig.SprintSpeedMultiplier.Description.AcceptableValues
+                .Clamp(message.sprintSpeedMultiplier);
             InteractionHooks.ApplySettingToExistingDrones();
         }
 
         private static void ResetReceivedSettings()
         {
             receivedSurvivorActions = (bool)PluginConfig.DroneSurvivorActions.DefaultValue;
-            receivedGoldMode = (DroneGoldMode)PluginConfig.DroneGold.DefaultValue;
+            receivedCombatGold = (bool)PluginConfig.DroneCombatGold.DefaultValue;
+            receivedBarrelGold = (bool)PluginConfig.DroneBarrelGold.DefaultValue;
+            receivedShrineOfBloodGold = (bool)PluginConfig.DroneShrineOfBloodGold.DefaultValue;
             receivedDronesCanChargeHoldoutZones = (bool)PluginConfig.DronesCanChargeHoldoutZones.DefaultValue;
             receivedIgnoreDronesForAllPlayerChecks = (bool)PluginConfig.IgnoreDronesForAllPlayerChecks.DefaultValue;
             receivedSpareDronesFromArenaVoidKill = (bool)PluginConfig.SpareDronesFromArenaVoidKill.DefaultValue;
+            receivedSprintSpeedMultiplier = (float)PluginConfig.SprintSpeedMultiplier.DefaultValue;
         }
     }
 }

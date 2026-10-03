@@ -1,6 +1,6 @@
 {
   "name": "DroneImprovements",
-  "version_number": "1.1.2",
+  "version_number": "1.2.0",
   "website_url": "https://github.com/T-Jayay/DroneImprovements",
   "description": "Remote Operation drone players can interact, buy, pick up equipment, earn gold and help charge holdout zones like survivors (host settings), get Disconnect and Teleport to Player skills, and the Mithrix arena and escape ship don't wait for them.",
   "dependencies": [

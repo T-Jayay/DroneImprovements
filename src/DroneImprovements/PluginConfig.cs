@@ -1,4 +1,5 @@
 using BepInEx.Configuration;
+using UnityEngine;
 
 namespace DroneImprovements
 {
@@ -13,6 +14,13 @@ namespace DroneImprovements
         private const string HostSection = "Host";
         private const string ObjectivesSection = "Objectives";
         private const string AbilitiesSection = "Abilities";
+        private const string FlightSection = "Flight";
+
+        private const float DefaultSprintSpeedMultiplier = 2f;
+        // At 1 the feature is off: holding Sprint flies down, as in the base game.
+        private const float MinSprintSpeedMultiplier = 1f;
+        // Below 4: RigidbodyMotor damages a drone that hits a wall at 4 times its move speed or faster.
+        private const float MaxSprintSpeedMultiplier = 3f;
 
         private const float DefaultDisconnectHoldSeconds = 1f;
         private const float MinDisconnectHoldSeconds = 0f;
@@ -24,7 +32,9 @@ namespace DroneImprovements
         private const float MaxTeleportCooldown = 600f;
 
         public static ConfigEntry<bool> DroneSurvivorActions { get; private set; }
-        public static ConfigEntry<DroneGoldMode> DroneGold { get; private set; }
+        public static ConfigEntry<bool> DroneCombatGold { get; private set; }
+        public static ConfigEntry<bool> DroneBarrelGold { get; private set; }
+        public static ConfigEntry<bool> DroneShrineOfBloodGold { get; private set; }
         public static ConfigEntry<bool> DronesCanChargeHoldoutZones { get; private set; }
         public static ConfigEntry<bool> IgnoreDronesForAllPlayerChecks { get; private set; }
         public static ConfigEntry<bool> SpareDronesFromArenaVoidKill { get; private set; }
@@ -32,19 +42,23 @@ namespace DroneImprovements
         public static ConfigEntry<float> DisconnectHoldSeconds { get; private set; }
         public static ConfigEntry<bool> TeleportEnabled { get; private set; }
         public static ConfigEntry<float> TeleportCooldown { get; private set; }
+        public static ConfigEntry<float> SprintSpeedMultiplier { get; private set; }
+        public static ConfigEntry<KeyboardShortcut> DescendKey { get; private set; }
 
         public static void Init(ConfigFile config)
         {
             DroneSurvivorActions = config.Bind(HostSection, "DroneSurvivorActions", true,
                 "(host) Drone players can open chests, use shrines, printers, scrappers and the teleporter, buy with "
                 + "their own gold, and pick up equipment. Off: they're locked out of those, as in the base game.");
-            DroneGold = config.Bind(HostSection, "DroneGold", DroneGoldMode.Full,
-                "(host) How drone players earn gold. The mod never takes gold they already have.\n"
-                + "Full: like survivors.\n"
-                + "NoKillGold: no gold from combat (kills, money packs, Brittle Crown, Roll of Pennies, ...); "
-                + "barrels and Shrine of Blood still pay.\n"
-                + "None: no gold at all, and they can't use barrels or Shrine of Blood.\n"
-                + "Shared gold (kills, money packs, barrels) that drone players don't get goes to the survivors.");
+            DroneCombatGold = config.Bind(HostSection, "DroneCombatGold", true,
+                "(host) Drone players earn combat gold: kills, money packs, Brittle Crown, Roll of Pennies, ..., and "
+                + "gold other mods pay during a kill, hit or damage. Off: they get none, and their share of the "
+                + "shared combat gold goes to the survivors.");
+            DroneBarrelGold = config.Bind(HostSection, "DroneBarrelGold", true,
+                "(host) Drone players can open barrels and get their share of the gold. Off: they can't open "
+                + "barrels, and the survivors get all the gold of the barrels they open.");
+            DroneShrineOfBloodGold = config.Bind(HostSection, "DroneShrineOfBloodGold", true,
+                "(host) Drone players can use Shrine of Blood, which trades health for gold. Off: they can't.");
 
             DronesCanChargeHoldoutZones = config.Bind(ObjectivesSection, "DronesCanChargeHoldoutZones", true,
                 "(host) Drone players inside a holdout zone (teleporter, pillars, Void Fields cells, ...) help charge "
@@ -71,6 +85,15 @@ namespace DroneImprovements
                 new ConfigDescription("(per player) Base cooldown of Teleport to Player, in seconds. Cooldown items "
                     + "can shorten it.",
                     new AcceptableValueRange<float>(MinTeleportCooldown, MaxTeleportCooldown)));
+
+            SprintSpeedMultiplier = config.Bind(FlightSection, "SprintSpeedMultiplier", DefaultSprintSpeedMultiplier,
+                new ConfigDescription("(host) How many times faster drone players fly while holding Sprint. At 1 "
+                    + "this is off, and Sprint flies down as in the base game.",
+                    new AcceptableValueRange<float>(MinSprintSpeedMultiplier, MaxSprintSpeedMultiplier)));
+            DescendKey = config.Bind(FlightSection, "DescendKey", new KeyboardShortcut(KeyCode.LeftControl),
+                "(per player) Hold to fly your drone down (Jump flies up). It works whatever SprintSpeedMultiplier "
+                + "is. Modifier keys are ignored: the main key alone counts, so it also works while you hold "
+                + "movement keys.");
         }
     }
 }

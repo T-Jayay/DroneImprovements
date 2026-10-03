@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.2.0
+
+- New drone controls: **Shift (Sprint) flies faster**, the new **Descend key (Left Ctrl by default) flies down**, and Space (Jump) flies up. In the base game holding Sprint flew down.
+  - New host setting `SprintSpeedMultiplier` (default 2, 1 to 3): how many times faster drones fly while holding Sprint. At 1 it is off and Sprint flies down as in the base game. Clients use the host's value.
+  - New per-player setting `DescendKey`: the key that flies your drone down. It works whatever the multiplier is. Only the main key counts (modifier keys are ignored), so it also works while you hold movement keys.
+  - Both are in Risk of Options too.
+- `DroneGold` is replaced by three host settings, one for each source of gold. All are on by default:
+  - `DroneCombatGold`: drone players earn combat gold (kills, money packs, Brittle Crown, Roll of Pennies, ...). Off: they get none, and their share goes to the survivors.
+  - `DroneBarrelGold`: drone players can open barrels and get their share of the gold. Off: they can't open barrels, and the survivors get all the gold of the barrels they open.
+  - `DroneShrineOfBloodGold`: drone players can use Shrine of Blood. Off: they can't.
+  - Anyone who had changed `DroneGold` gets the defaults (everything on) and should set the new settings again.
+- Gold that another mod pays straight to a drone player during a kill, a hit or damage counts as combat gold, so `DroneCombatGold` off blocks it too. Other gold that mods pay straight to a drone player is no longer blocked (it was with `DroneGold` set to None).
+
 ## 1.1.2
 
 - Internal clean-up, no gameplay changes: the code now follows the Risk of Rain 2 modding community's conventions (the game's own network message handlers, for example) and drops the layers that caught errors and quietly fell back to the base game.

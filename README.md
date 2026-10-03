@@ -1,6 +1,6 @@
 # DroneImprovements
 
-A Risk of Rain 2 (BepInEx) mod that improves Remote Operation, the base game's feature that lets dead players pilot drones: drone players get survivor actions and gold, Disconnect and Teleport to Player skills, and objectives that don't wait for them.
+A Risk of Rain 2 (BepInEx) mod that improves Remote Operation, the base game's feature that lets dead players pilot drones: drone players get survivor actions and gold, sprint and descend flight controls, Disconnect and Teleport to Player skills, and objectives that don't wait for them.
 
 - Store page: [revoreverse/DroneImprovements](https://thunderstore.io/c/riskofrain2/p/revoreverse/DroneImprovements/). Its source, [thunderstore/DroneImprovements/README.md](thunderstore/DroneImprovements/README.md), describes every feature and setting for players; this file is for development.
 - [docs/MODDING_GUIDE.md](docs/MODDING_GUIDE.md): how this mod, [MarkAllSeen](https://github.com/T-Jayay/MarkAllSeen) and [SprintImprovements](https://github.com/T-Jayay/SprintImprovements) are set up, built, tested and published.
@@ -34,12 +34,12 @@ The full checklist is under Publishing in the [modding guide](docs/MODDING_GUIDE
 
 ## How it works
 
-- `DroneImprovementsPlugin.cs` sets everything up and adds the MonoMod hooks (`On.` hooks) in `Hooks/` and `Skills/`. Players get `MMHOOK_RoR2.dll`, which the hooks need, from HookGenPatcher, a dependency in the manifest.
+- `DroneImprovementsPlugin.cs` sets everything up and adds the MonoMod hooks (`On.` and `IL.` hooks) in `Hooks/` and `Skills/`. Players get `MMHOOK_RoR2.dll`, which the hooks need, from HookGenPatcher, a dependency in the manifest.
 - Every player needs the same version of the mod: it adds `revor.DroneImprovements;<version>` to the game's network mod list, so the game refuses players with another version or without the mod. The mod adds skills and entity states to the game's catalogs and has its own network messages, so a mismatch would break the session.
-- Settings marked *host* in the store README are decided by the host, which sends them to the clients (`HostSettings.cs`). The parts of the mod that also run on clients then follow the host: the interaction prompts (`DroneSurvivorActions`, and `DroneGold` for barrels and the Shrine of Blood), and whether a holdout zone's charge indicator and Lepton Daisy's effect on it count a drone in the zone as charging (`DronesCanChargeHoldoutZones`).
+- Settings marked *host* in the store README are decided by the host, which sends them to the clients (`HostSettings.cs`). The parts of the mod that also run on clients then follow the host: the interaction prompts (`DroneSurvivorActions`, and `DroneBarrelGold` and `DroneShrineOfBloodGold` for barrels and the Shrine of Blood), whether a holdout zone's charge indicator and Lepton Daisy's effect on it count a drone in the zone as charging (`DronesCanChargeHoldoutZones`), and the flight speed, which the client that owns the drone computes (`SprintSpeedMultiplier`).
 - Network messages, handled through the game's `[NetworkMessageHandler]`, with their ids in `MessageIds.cs`: 17392, a client asking the host to remove its drone (Disconnect, `DroneNetworking.cs`); 17393, the host settings (`HostSettings.cs`).
 - `Skills/` adds the Disconnect (Utility) and Teleport to Player (Special) skills to every Remote Operation body. `DroneTeleport.cs` finds a safe spot next to a player; other mods can add destinations through the public `DroneTeleportApi`.
-- `Hooks/` has one file per host setting: `InteractionHooks.cs` (`DroneSurvivorActions`), `GoldHooks.cs` (`DroneGold`), `HoldoutZoneHooks.cs` (`DronesCanChargeHoldoutZones`), `AllPlayersCheckHooks.cs` (`IgnoreDronesForAllPlayerChecks`: the Mithrix arena entrance, all-players triggers and the escape ship) and `ArenaVoidKillHooks.cs` (`SpareDronesFromArenaVoidKill`).
+- `Hooks/` has one file per host setting: `InteractionHooks.cs` (`DroneSurvivorActions`), `GoldHooks.cs` (`DroneCombatGold`, `DroneBarrelGold` and `DroneShrineOfBloodGold`), `FlightHooks.cs` (`SprintSpeedMultiplier`, and the per-player `DescendKey`: one IL hook on `PlayerFlyState.PerformInputs`), `HoldoutZoneHooks.cs` (`DronesCanChargeHoldoutZones`), `AllPlayersCheckHooks.cs` (`IgnoreDronesForAllPlayerChecks`: the Mithrix arena entrance, all-players triggers and the escape ship) and `ArenaVoidKillHooks.cs` (`SpareDronesFromArenaVoidKill`).
 - Risk of Options is optional (a soft dependency): `RiskOfOptionsCompat.cs` is only used when it is installed.
 
 ## Testing solo (DevTools)
@@ -50,7 +50,7 @@ The full checklist is under Publishing in the [modding guide](docs/MODDING_GUIDE
 |---|---|
 | F5 | Show or hide the panel |
 | F6 | Kill yourself |
-| F7 | +$1000, added to your money directly, so `DroneGold` doesn't block it |
+| F7 | +$1000, added to your money directly, so the gold settings don't affect it |
 | F4 | Spawn an invincible AI stand-in player: a teleport target that also counts as a living player for holdout zones, and can be spectated. Spawn one before dying: with nobody to spectate there is no Remote Operation menu. |
 | F3 | Remove every stand-in, for example to see Teleport greyed out with nobody to go to |
 | F10 | Turn "prevent game over" on or off (on by default, so a solo run survives your death) |
@@ -60,6 +60,7 @@ Picking a drone works as in the base game (spectator menu, discovered drones onl
 Solo testing doesn't cover everything. Before a release, check these in a real lobby with another player:
 - Disconnect from a **client** (the client → host request naming the drone, message 17392).
 - The host settings reaching clients (message 17393): the interaction prompts follow the host, and so do a holdout zone's charge indicator and Lepton Daisy's effect on it while only a drone is in the zone; host settings are greyed out in the client's Risk of Options.
+- Flying a drone as a **client**: Shift flies faster by the host's `SprintSpeedMultiplier` (also after the host changes it), Left Ctrl flies down, Space flies up, and the Descend key does nothing while typing in chat.
 - A player with a different version of the mod, or without it, being refused.
 - The Mithrix arena cutscene and the escape ship not waiting for drones; drones inside the arena and aboard the ship surviving; drones outside the arena not being killed.
 - The run ending when every non-drone player is dead.

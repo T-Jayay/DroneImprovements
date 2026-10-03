@@ -9,7 +9,8 @@ namespace DroneImprovements
 {
     /// <summary>
     /// Improves the base game's Remote Operation (dead players piloting drones): survivor actions and gold for drone
-    /// players, Disconnect and Teleport to Player skills, and objectives that don't wait for drones.
+    /// players, sprint and descend flight controls, Disconnect and Teleport to Player skills, and objectives that
+    /// don't wait for drones.
     /// </summary>
     [BepInPlugin(PluginGUID, PluginName, PluginVersion)]
     [BepInDependency(RiskOfOptionsCompat.Guid, BepInDependency.DependencyFlags.SoftDependency)]
@@ -17,7 +18,7 @@ namespace DroneImprovements
     {
         public const string PluginGUID = "revor.DroneImprovements";
         public const string PluginName = "DroneImprovements";
-        public const string PluginVersion = "1.1.2"; // tools/package.py checks this against the manifest
+        public const string PluginVersion = "1.2.0"; // tools/package.py checks this against the manifest
 
         internal static ManualLogSource Log { get; private set; }
 
@@ -35,6 +36,7 @@ namespace DroneImprovements
             RoR2Application.onLoad += DroneBodyReport.OnGameLoaded;
             InteractionHooks.Init();
             GoldHooks.Init();
+            FlightHooks.Init();
             HoldoutZoneHooks.Init();
             AllPlayersCheckHooks.Init();
             ArenaVoidKillHooks.Init();
