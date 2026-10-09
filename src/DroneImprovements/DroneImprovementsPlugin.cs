@@ -18,7 +18,7 @@ namespace DroneImprovements
     {
         public const string PluginGUID = "revor.DroneImprovements";
         public const string PluginName = "DroneImprovements";
-        public const string PluginVersion = "1.2.0"; // tools/package.py checks this against the manifest
+        public const string PluginVersion = "1.2.1"; // tools/package.py checks this against the manifest
 
         internal static ManualLogSource Log { get; private set; }
 

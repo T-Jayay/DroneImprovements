@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.1
+
+- Updated for Risk of Rain 2 1.5.0, where version 1.2.0 doesn't load. The patch also moved the game's gold payouts to new methods, which the host settings `DroneCombatGold` and `DroneBarrelGold` now follow.
+
 ## 1.2.0
 
 - New drone controls: **Shift (Sprint) flies faster**, the new **Descend key (Left Ctrl by default) flies down**, and Space (Jump) flies up. In the base game holding Sprint flew down.

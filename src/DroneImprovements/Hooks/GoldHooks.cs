@@ -55,10 +55,10 @@ namespace DroneImprovements.Hooks
             On.RoR2.MoneyPickup.OnTriggerStay += MoneyPickup_OnTriggerStay;
             On.RoR2.GlobalEventManager.OnHitEnemy += GlobalEventManager_OnHitEnemy;
             On.RoR2.HealthComponent.TakeDamage += HealthComponent_TakeDamage;
-            On.RoR2.TeamManager.GiveTeamMoney_TeamIndex_uint += TeamManager_GiveTeamMoney_TeamIndex_uint;
+            On.RoR2.TeamManager.GiveTeamMoney_TeamIndex_uint_bool += TeamManager_GiveTeamMoney_TeamIndex_uint_bool;
             On.RoR2.Orbs.OrbManager.AddOrb += OrbManager_AddOrb;
             On.RoR2.Orbs.GoldOrb.OnArrival += GoldOrb_OnArrival;
-            On.RoR2.CharacterMaster.GiveMoney += CharacterMaster_GiveMoney;
+            On.RoR2.CharacterMaster.GiveMoney_uint_bool += CharacterMaster_GiveMoney_uint_bool;
             On.RoR2.BarrelInteraction.OnInteractionBegin += BarrelInteraction_OnInteractionBegin;
             On.RoR2.BarrelInteraction.GetInteractability += BarrelInteraction_GetInteractability;
             On.RoR2.PurchaseInteraction.GetInteractability += PurchaseInteraction_GetInteractability;
@@ -148,20 +148,20 @@ namespace DroneImprovements.Hooks
         /// Leaves drone players out of a team payout (kills, money packs, barrels) when they shouldn't get it, and
         /// splits it between the survivors instead, so none of it is lost while a survivor is alive.
         /// <para>
-        /// This replaces TeamManager.GiveTeamMoney(TeamIndex, uint) when drones are left out, mirroring it with
+        /// This replaces TeamManager.GiveTeamMoney(TeamIndex, uint, bool) when drones are left out, mirroring it with
         /// survivors in place of all players: vanilla divides the amount by Run.livingPlayerCount (drone players
         /// included) and pays every player body on the team, both inside that one method, so there is no narrower place
         /// to change. Otherwise orig runs.
         /// </para>
         /// </summary>
-        private static void TeamManager_GiveTeamMoney_TeamIndex_uint(
-            On.RoR2.TeamManager.orig_GiveTeamMoney_TeamIndex_uint orig, TeamManager self, TeamIndex teamIndex,
-            uint money)
+        private static void TeamManager_GiveTeamMoney_TeamIndex_uint_bool(
+            On.RoR2.TeamManager.orig_GiveTeamMoney_TeamIndex_uint_bool orig, TeamManager self, TeamIndex teamIndex,
+            uint money, bool bypassStatManager)
         {
             // On a client the original only logs a warning.
             if (!NetworkServer.active || !ShouldExcludeDronesFromTeamPayout)
             {
-                orig(self, teamIndex, money);
+                orig(self, teamIndex, money, bypassStatManager);
                 return;
             }
             // The replacement: orig isn't called.
@@ -173,7 +173,7 @@ namespace DroneImprovements.Hooks
                 CharacterBody body = members[i].body;
                 if (DroneUtil.IsSurvivorPlayer(body) && body.master)
                 {
-                    body.master.GiveMoney(share);
+                    body.master.GiveMoney(share, bypassStatManager);
                 }
             }
         }
@@ -210,14 +210,14 @@ namespace DroneImprovements.Hooks
         /// Gold another mod pays straight to a drone player during a combat context doesn't pay them when
         /// DroneCombatGold is off: orig isn't called then.
         /// </summary>
-        private static void CharacterMaster_GiveMoney(On.RoR2.CharacterMaster.orig_GiveMoney orig, CharacterMaster self,
-            uint amount)
+        private static void CharacterMaster_GiveMoney_uint_bool(On.RoR2.CharacterMaster.orig_GiveMoney_uint_bool orig,
+            CharacterMaster self, uint amount, bool bypassStatManager)
         {
             if (!HostSettings.CombatGold && InCombatContext && DroneUtil.IsDronePlayer(self.GetBody()))
             {
                 return;
             }
-            orig(self, amount);
+            orig(self, amount, bypassStatManager);
         }
 
         // --- Gold interactables -------------------------------------------------------------------------------------
